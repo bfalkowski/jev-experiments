@@ -2,47 +2,220 @@
 <html lang="en">
 <head>
 <meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
 <title>Jev Browser-Action Dashboard</title>
 <style>
-  body { font-family: system-ui, sans-serif; max-width: 1500px; margin: 2rem auto; padding: 0 1rem; color:#1a1a1a; }
-  h1 { font-size: 1.4rem; }
-  .controls { display:flex; gap:0.5rem; align-items:center; margin-bottom:1rem; flex-wrap:wrap; }
-  select, button { padding: 0.5rem 0.8rem; font-size:0.95rem; }
-  button { cursor:pointer; background:#2563eb; color:white; border:none; border-radius:4px; }
-  button:disabled { background:#93c5fd; cursor:not-allowed; }
-  .step { border:1px solid #e2e2e2; border-radius:6px; padding:0.75rem 1rem; margin-bottom:0.6rem; }
-  .step.verify { background:#f8fafc; }
-  .step.mcp_action { border-left:3px solid #7c3aed; }
-  .step.mcp_verify { background:#f8fafc; border-left:3px solid #7c3aed; }
-  .tool-call { font-size:0.8rem; color:#555; margin-left:1rem; }
-  .step-head { display:flex; justify-content:space-between; align-items:center; }
-  .badge { display:inline-block; padding:0.15rem 0.5rem; border-radius:10px; font-size:0.8rem; font-weight:600; }
-  .badge.ok { background:#dcfce7; color:#166534; }
-  .badge.bad { background:#fee2e2; color:#991b1b; }
-  .conf-high { color:#166534; }
-  .conf-mid { color:#92400e; }
-  .conf-low { color:#991b1b; }
-  .meta { font-size:0.85rem; color:#555; margin-top:0.25rem; }
-  code { background:#f1f5f9; padding:0.05rem 0.3rem; border-radius:3px; }
-  #summary { margin-top:1rem; padding:0.75rem 1rem; border-radius:6px; background:#f1f5f9; font-weight:600; }
-  .step-shot { display:block; margin-top:0.5rem; max-width:100%; border:1px solid #ddd; border-radius:4px; }
-  .split { display:flex; gap:1.25rem; align-items:flex-start; }
+  /* Color roles as CSS custom properties (light default, dark under the
+     media query) -- palette validated with the data-viz skill's
+     six-checks script: engine identity colors are categorical slots 1
+     (blue, Jev) and 2 (orange, Claude+MCP), the only two-slot pairing
+     that clears CVD separation in BOTH light and dark (blue+violet,
+     tried first, failed dark-mode CVD at ΔE 1.9 -- rejected). Status
+     colors (good/critical) are the palette's fixed, never-themed status
+     hues, always paired with an icon + text label, never color alone. */
+  :root {
+    color-scheme: light;
+    --page-plane:     #f9f9f7;
+    --surface:        #fcfcfb;
+    --surface-2:      #f4f3f0;
+    --ink-primary:    #0b0b0b;
+    --ink-secondary:  #52514e;
+    --ink-muted:      #898781;
+    --border:         rgba(11,11,11,0.10);
+    --gridline:       #e1e0d9;
+
+    --engine-jev:      #2a78d6;
+    --engine-jev-tint: #e6f0fb;
+    --engine-mcp:      #eb6834;
+    --engine-mcp-tint: #fdece3;
+
+    --status-good:      #0ca30c;
+    --status-good-tint: #dcfce7;
+    --status-good-text: #006300;
+    --status-warn:      #fab219;
+    --status-warn-tint: #fef3e0;
+    --status-warn-text: #92400e;
+    --status-crit:      #d03b3b;
+    --status-crit-tint: #fbe2e2;
+    --status-crit-text: #991b1b;
+
+    --shadow: 0 1px 2px rgba(11,11,11,0.06), 0 1px 1px rgba(11,11,11,0.04);
+  }
+  @media (prefers-color-scheme: dark) {
+    :root {
+      color-scheme: dark;
+      --page-plane:     #0d0d0d;
+      --surface:        #1a1a19;
+      --surface-2:      #232322;
+      --ink-primary:    #ffffff;
+      --ink-secondary:  #c3c2b7;
+      --ink-muted:      #898781;
+      --border:         rgba(255,255,255,0.10);
+      --gridline:       #2c2c2a;
+
+      --engine-jev:      #3987e5;
+      --engine-jev-tint: #14283f;
+      --engine-mcp:      #d95926;
+      --engine-mcp-tint: #3a2015;
+
+      --status-good:      #0ca30c;
+      --status-good-tint: #0f2e14;
+      --status-good-text: #4ade80;
+      --status-warn:      #fab219;
+      --status-warn-tint: #3a2c0d;
+      --status-warn-text: #fbbf24;
+      --status-crit:      #e66767;
+      --status-crit-tint: #3a1414;
+      --status-crit-text: #f87171;
+
+      --shadow: 0 1px 3px rgba(0,0,0,0.4);
+    }
+  }
+
+  * { box-sizing: border-box; }
+  body {
+    font-family: system-ui, -apple-system, "Segoe UI", sans-serif;
+    max-width: 1500px; margin: 0 auto; padding: 1.5rem 1.25rem 4rem;
+    background: var(--page-plane); color: var(--ink-primary);
+    line-height: 1.45;
+  }
+
+  header { margin-bottom: 1.5rem; }
+  h1 { font-size: 1.5rem; margin: 0 0 0.2rem 0; letter-spacing: -0.01em; }
+  .subtitle { color: var(--ink-secondary); font-size: 0.92rem; margin: 0 0 0.9rem 0; }
+  .legend-key { display:flex; gap:1.1rem; font-size:0.82rem; color: var(--ink-secondary); }
+  .legend-key .dot { display:inline-block; width:9px; height:9px; border-radius:50%; margin-right:0.4rem; vertical-align:middle; }
+
+  .controls {
+    display:flex; gap:0.6rem; align-items:center; flex-wrap:wrap;
+    background: var(--surface); border: 1px solid var(--border); border-radius: 10px;
+    padding: 0.9rem 1rem; box-shadow: var(--shadow); margin-bottom: 1.5rem;
+  }
+  select, button {
+    padding: 0.5rem 0.85rem; font-size: 0.9rem; border-radius: 6px;
+    border: 1px solid var(--border); background: var(--surface-2); color: var(--ink-primary);
+    font-family: inherit;
+  }
+  button {
+    cursor: pointer; background: var(--engine-jev); color: #fff; border: none;
+    font-weight: 600; transition: filter 0.15s ease;
+  }
+  button:hover:not(:disabled) { filter: brightness(1.08); }
+  button:disabled { background: var(--ink-muted); cursor: not-allowed; }
+  .check-label {
+    font-size: 0.85rem; color: var(--ink-secondary); display:flex;
+    align-items:center; gap:0.4rem; cursor:pointer;
+  }
+
+  .step {
+    background: var(--surface); border: 1px solid var(--border); border-left: 3px solid var(--gridline);
+    border-radius: 8px; padding: 0.85rem 1.05rem; margin-bottom: 0.7rem; box-shadow: var(--shadow);
+  }
+  .step.action, .step.verify { border-left-color: var(--engine-jev); }
+  .step.mcp_action, .step.mcp_verify { border-left-color: var(--engine-mcp); }
+  .step.verify, .step.mcp_verify { background: var(--surface-2); }
+  .tool-call { font-size: 0.8rem; color: var(--ink-secondary); margin-left: 1rem; font-family: ui-monospace, monospace; }
+  .step-head { display:flex; justify-content:space-between; align-items:center; margin-bottom: 0.15rem; }
+  .step-head strong { font-size: 0.95rem; font-weight: 600; }
+
+  .badge {
+    display:inline-flex; align-items:center; gap:0.3rem; padding:0.1rem 0.55rem;
+    border-radius: 999px; font-size: 0.76rem; font-weight: 700; letter-spacing: 0.01em;
+  }
+  .badge.ok   { background: var(--status-good-tint); color: var(--status-good-text); }
+  .badge.bad  { background: var(--status-crit-tint); color: var(--status-crit-text); }
+
+  .conf-high { color: var(--status-good-text); font-weight: 600; }
+  .conf-mid  { color: var(--status-warn-text); font-weight: 600; }
+  .conf-low  { color: var(--status-crit-text); font-weight: 600; }
+
+  .meta { font-size: 0.85rem; color: var(--ink-secondary); margin-top: 0.3rem; }
+  .meta .figures { font-variant-numeric: tabular-nums; }
+  code { background: var(--surface-2); padding: 0.05rem 0.35rem; border-radius: 4px; font-size: 0.85em; }
+
+  #summary, .summary-line {
+    margin-top: 1rem; padding: 0.75rem 1rem; border-radius: 8px;
+    background: var(--surface-2); border: 1px solid var(--border);
+    font-weight: 600; font-size: 0.9rem; font-variant-numeric: tabular-nums;
+  }
+
+  .step-shot {
+    display:block; margin-top:0.65rem; max-width:100%; border-radius:6px;
+    border: 1px solid var(--border); box-shadow: var(--shadow);
+  }
+
+  .split { display:flex; gap:1.5rem; align-items:flex-start; }
   .split-col { flex:1; min-width:0; }
-  .split-col h2 { font-size:1.05rem; margin:0 0 0.5rem 0; }
-  .split-col .summary-line { font-size:0.85rem; color:#444; margin-top:0.5rem; padding:0.5rem 0.75rem; background:#f1f5f9; border-radius:6px; font-weight:600; }
+  .split-col h2 {
+    font-size: 1rem; margin: 0 0 0.7rem 0; padding-bottom: 0.5rem;
+    border-bottom: 2px solid var(--gridline); display:flex; align-items:center; gap:0.5rem;
+  }
+  .split-col h2::before {
+    content: ""; display:inline-block; width:10px; height:10px; border-radius:50%;
+  }
+  .split-col.jev h2::before { background: var(--engine-jev); }
+  .split-col.mcp h2::before { background: var(--engine-mcp); }
+
+  /* Each column scrolls independently instead of the whole page jumping
+     to whichever engine just wrote a step. Without this, a fast Jev run
+     yanks the page down on every step (via scrollIntoView), so scrolling
+     up to watch a slow MCP column -- e.g. to show it still launching --
+     never sticks: the next Jev step drags the viewport away again.
+     Bounding each column's own height and scrolling *inside* it means
+     the two columns never fight over the page's scroll position. */
+  .col-body {
+    max-height: 65vh; overflow-y: auto; padding-right: 0.3rem;
+  }
+  @media (max-width: 900px) {
+    .split { flex-direction: column; }
+    .col-body { max-height: 45vh; }
+  }
+
   .hidden { display:none; }
-  .status-line { font-size:0.85rem; color:#6b21a8; font-style:italic; padding:0.4rem 0.2rem; }
-  #comparison { margin-top:1.5rem; padding:1rem 1.25rem; border-radius:8px; background:#0f172a; color:#e2e8f0; }
-  #comparison h2 { font-size:1.05rem; margin:0 0 0.6rem 0; color:#fff; }
-  #comparison table { width:100%; border-collapse:collapse; font-size:0.9rem; }
-  #comparison td, #comparison th { padding:0.3rem 0.6rem; text-align:left; border-bottom:1px solid #334155; }
-  #comparison th { color:#94a3b8; font-weight:600; }
-  #comparison td.num { text-align:right; font-variant-numeric:tabular-nums; }
-  #comparison .highlight { color:#4ade80; font-weight:700; }
+
+  #demo-label.demo-disabled { opacity: 0.45; cursor: default; }
+
+  #demo-banner {
+    margin-bottom: 1.1rem; padding: 0.65rem 1rem; border-radius: 8px;
+    background: var(--status-warn-tint); color: var(--status-warn-text);
+    border: 1px solid var(--status-warn); font-weight: 700; font-size: 0.85rem;
+  }
+
+  .status-line {
+    font-size: 0.85rem; color: var(--ink-secondary); font-style: italic;
+    padding: 0.5rem 0.2rem; display:flex; align-items:center; gap:0.5rem;
+  }
+  .status-line .spinner {
+    display:inline-block; width:9px; height:9px; border-radius:50%;
+    background: var(--ink-muted); animation: pulse 1.1s ease-in-out infinite;
+  }
+  @keyframes pulse { 0%, 100% { opacity: 0.3; } 50% { opacity: 1; } }
+
+  #comparison {
+    margin-top: 1.75rem; padding: 1.1rem 1.3rem; border-radius: 10px;
+    background: var(--surface); border: 1px solid var(--border); box-shadow: var(--shadow);
+  }
+  #comparison h2 { font-size: 1rem; margin: 0 0 0.75rem 0; }
+  #comparison table { width:100%; border-collapse: collapse; font-size: 0.88rem; }
+  #comparison td, #comparison th { padding: 0.45rem 0.6rem; text-align:left; border-bottom: 1px solid var(--gridline); }
+  #comparison th { color: var(--ink-muted); font-weight: 600; font-size: 0.8rem; text-transform: uppercase; letter-spacing: 0.03em; }
+  #comparison th.col-jev { color: var(--engine-jev); }
+  #comparison th.col-mcp { color: var(--engine-mcp); }
+  #comparison td.num { text-align:right; font-variant-numeric: tabular-nums; }
+  #comparison .highlight { color: var(--status-good-text); font-weight: 700; }
+  #comparison tr:last-child td, #comparison tr:last-child th { border-bottom: none; }
 </style>
 </head>
 <body>
-  <h1>Jev Browser-Action Dashboard</h1>
+  <header>
+    <h1>Jev Browser-Action Dashboard</h1>
+    <p class="subtitle">Same disambiguation task, two engines: a purpose-built structured-decision model vs. a general Claude tool-use loop over real playwright-mcp.</p>
+    <div class="legend-key">
+      <span><span class="dot" style="background:var(--engine-jev)"></span>Jev (System One model)</span>
+      <span><span class="dot" style="background:var(--engine-mcp)"></span>Claude + real playwright-mcp</span>
+    </div>
+  </header>
+
   <div class="controls">
     <select id="engine-select">
       <option value="jev">Jev (System One model)</option>
@@ -52,12 +225,18 @@
     <select id="flow-select">
       {{FLOW_OPTIONS}}
     </select>
-    <label style="font-size:0.9rem; display:flex; align-items:center; gap:0.3rem;">
+    <label class="check-label">
       <input type="checkbox" id="headed-check">
       also open a real browser window (in addition to the embedded view below)
     </label>
+    <label class="check-label" id="demo-label" title="Only applies to 'Run both': Jev runs its full flow, Claude+playwright-mcp stops after a few steps.">
+      <input type="checkbox" id="demo-check">
+      demo mode (full Jev run, first 3 Claude+MCP steps only)
+    </label>
     <button id="run-btn">Run</button>
   </div>
+
+  <div id="demo-banner" class="hidden">DEMO MODE &mdash; Jev is running the full flow; Claude + playwright-mcp stops after a few steps to keep this quick and cheap to demo.</div>
 
   <!-- Single-engine view (jev or mcp alone) -->
   <div id="single-view">
@@ -68,14 +247,14 @@
   <!-- Split-screen view (both engines, side by side) -->
   <div id="split-view" class="hidden">
     <div class="split">
-      <div class="split-col">
+      <div class="split-col jev">
         <h2>Jev (System One model)</h2>
-        <div id="results-jev"></div>
+        <div id="results-jev" class="col-body"></div>
         <div id="summary-jev" class="summary-line" hidden></div>
       </div>
-      <div class="split-col">
+      <div class="split-col mcp">
         <h2>Claude + real playwright-mcp</h2>
-        <div id="results-mcp"></div>
+        <div id="results-mcp" class="col-body"></div>
         <div id="summary-mcp" class="summary-line" hidden></div>
       </div>
     </div>
@@ -90,6 +269,22 @@ const singleView = document.getElementById("single-view");
 const splitView = document.getElementById("split-view");
 const results = document.getElementById("results");
 const summary = document.getElementById("summary");
+const demoCheck = document.getElementById("demo-check");
+const demoLabel = document.getElementById("demo-label");
+const demoBanner = document.getElementById("demo-banner");
+let lastRunWasDemo = false;
+
+// Demo mode only means something for "Run both" (it trims the MCP side
+// while Jev still runs in full) -- grey it out otherwise so it's not a
+// dead control that silently does nothing.
+function updateDemoAvailability() {
+  const isBoth = engineSelect.value === "both";
+  demoCheck.disabled = !isBoth;
+  demoLabel.classList.toggle("demo-disabled", !isBoth);
+  if (!isBoth) demoCheck.checked = false;
+}
+engineSelect.addEventListener("change", updateDemoAvailability);
+updateDemoAvailability();
 
 function confClass(c) {
   if (c === null || c === undefined) return "";
@@ -104,6 +299,14 @@ function esc(s) {
   return d.innerHTML;
 }
 
+// Status badges always pair an icon with the text label (never color
+// alone) -- the data-viz palette's light-mode warning/serious tints are
+// intentionally sub-3:1 on their own, so the mitigation has to travel
+// with the badge everywhere it's built, not just in the CSS.
+function badge(ok, label) {
+  return `<span class="badge ${ok ? "ok" : "bad"}">${ok ? "✓" : "✗"} ${esc(label)}</span>`;
+}
+
 // Builds the inner HTML for one step card -- shared by both the single-
 // engine view and each column of the split-screen view.
 function stepHtml(d) {
@@ -112,34 +315,28 @@ function stepHtml(d) {
   if (d.kind === "action") {
     html += `<div class="meta">Jev picked: <code>${esc(d.picked.role)}</code> "${esc(d.picked.name)}"</div>`;
     html += `<div class="meta">context: "${esc(d.picked.context)}"</div>`;
-    html += `<div class="meta"><span class="${confClass(d.confidence)}">confidence ${d.confidence.toFixed(2)}</span> &middot; ${d.latency_ms} ms &middot; ${d.input_tokens}/${d.output_tokens} in/out tokens &middot; ~$${d.cost_usd.toFixed(8)}</div>`;
+    html += `<div class="meta figures"><span class="${confClass(d.confidence)}">confidence ${d.confidence.toFixed(2)}</span> &middot; ${d.latency_ms} ms &middot; ${d.input_tokens}/${d.output_tokens} in/out tokens &middot; ~$${d.cost_usd.toFixed(8)}</div>`;
     if (d.ground_truth) {
       const gt = d.ground_truth;
-      const badge = gt.correct
-        ? `<span class="badge ok">CORRECT</span>`
-        : `<span class="badge bad">WRONG</span>`;
-      html += `<div class="meta">expected: ${esc(JSON.stringify(gt.expected))} &middot; actual: ${esc(JSON.stringify(gt.actual))} ${badge}</div>`;
+      html += `<div class="meta">expected: ${esc(JSON.stringify(gt.expected))} &middot; actual: ${esc(JSON.stringify(gt.actual))} ${badge(gt.correct, gt.correct ? "CORRECT" : "WRONG")}</div>`;
     }
   } else if (d.kind === "verify") {
     html += `<div class="meta">claim: "${esc(d.claim)}"</div>`;
     html += `<div class="meta">observed: "${esc(d.observed)}"</div>`;
-    html += `<div class="meta"><span class="${confClass(d.noul)}">supports claim: ${d.noul.toFixed(2)}</span> &middot; ${d.latency_ms} ms &middot; ${d.input_tokens}/${d.output_tokens} in/out tokens &middot; ~$${d.cost_usd.toFixed(8)}</div>`;
+    html += `<div class="meta figures"><span class="${confClass(d.noul)}">supports claim: ${d.noul.toFixed(2)}</span> &middot; ${d.latency_ms} ms &middot; ${d.input_tokens}/${d.output_tokens} in/out tokens &middot; ~$${d.cost_usd.toFixed(8)}</div>`;
   } else if (d.kind === "mcp_action") {
-    html += `<div class="meta">Claude used ${d.tool_call_count} tool call(s) &middot; ${d.input_tokens}/${d.output_tokens} in/out tokens &middot; ~$${d.cost_usd.toFixed(5)} &middot; ${d.latency_ms} ms</div>`;
+    html += `<div class="meta figures">Claude used ${d.tool_call_count} tool call(s) &middot; ${d.input_tokens}/${d.output_tokens} in/out tokens &middot; ~$${d.cost_usd.toFixed(5)} &middot; ${d.latency_ms} ms</div>`;
     for (const tc of d.tool_calls) {
       html += `<div class="tool-call">&rarr; <code>${esc(tc.name)}</code>(${esc(JSON.stringify(tc.input))})</div>`;
     }
     if (d.error) {
-      html += `<div class="meta"><span class="badge bad">TOOL ERROR</span> ${esc(d.error)}</div>`;
+      html += `<div class="meta">${badge(false, "TOOL ERROR")} ${esc(d.error)}</div>`;
     }
     if (d.no_op_suspected) {
-      html += `<div class="meta"><span class="badge bad">NO ACTION TAKEN</span> Claude only called read-only tools (e.g. browser_snapshot) this step -- the instruction likely wasn't actually carried out.</div>`;
+      html += `<div class="meta">${badge(false, "NO ACTION TAKEN")} Claude only called read-only tools (e.g. browser_snapshot) this step -- the instruction likely wasn't actually carried out.</div>`;
     }
   } else if (d.kind === "mcp_verify") {
-    const badge = d.correct
-      ? `<span class="badge ok">CORRECT</span>`
-      : `<span class="badge bad">WRONG</span>`;
-    html += `<div class="meta">expected: ${esc(JSON.stringify(d.expected))} &middot; actual: ${esc(JSON.stringify(d.actual))} ${badge} &middot; ${d.latency_ms} ms</div>`;
+    html += `<div class="meta">expected: ${esc(JSON.stringify(d.expected))} &middot; actual: ${esc(JSON.stringify(d.actual))} ${badge(d.correct, d.correct ? "CORRECT" : "WRONG")} &middot; ${d.latency_ms} ms</div>`;
   }
 
   // Embedded view of the site's state right after this step -- this is
@@ -158,19 +355,37 @@ function renderStep(d, container) {
     // phases before/between real steps (e.g. playwright-mcp cold-starting)
     // so a column isn't just blank while something slow is happening.
     div.className = "status-line";
-    div.textContent = "⏳ " + d.message;
+    div.innerHTML = `<span class="spinner"></span> ${esc(d.message)}`;
   } else {
     div.className = "step " + d.kind;
     div.innerHTML = stepHtml(d);
   }
+
+  // Split-screen columns (.col-body) scroll independently -- only
+  // auto-follow a column if the viewer was already at its bottom, so
+  // scrolling one column up (e.g. to show MCP still launching) sticks
+  // instead of being dragged back down by the other column's next step.
+  // The single-engine view has no such container -- it scrolls the
+  // whole page, same as before.
+  const isPanel = container.classList.contains("col-body");
+  const wasNearBottom = isPanel
+    ? (container.scrollHeight - container.scrollTop - container.clientHeight < 80)
+    : true;
+
   container.appendChild(div);
-  div.scrollIntoView({behavior: "smooth", block: "end"});
+
+  if (isPanel) {
+    if (wasNearBottom) container.scrollTop = container.scrollHeight;
+  } else {
+    div.scrollIntoView({behavior: "smooth", block: "end"});
+  }
 }
 
 function renderError(message, container) {
   const div = document.createElement("div");
   div.className = "step";
-  div.innerHTML = `<strong style="color:#991b1b">Error:</strong> ${esc(message)}`;
+  div.style.borderLeftColor = "var(--status-crit)";
+  div.innerHTML = `<strong style="color:var(--status-crit-text)">Error:</strong> ${esc(message)}`;
   container.appendChild(div);
 }
 
@@ -245,7 +460,11 @@ function renderComparison(tallyJev, tallyMcp) {
     ["Input/output tokens", `${tallyJev.totalInputTokens}/${tallyJev.totalOutputTokens}`, `${tallyMcp.totalInputTokens}/${tallyMcp.totalOutputTokens}`, ""],
   ];
 
-  let html = `<h2>Head-to-head</h2><table><tr><th></th><th>Jev</th><th>Claude + playwright-mcp</th><th>Delta</th></tr>`;
+  let html = `<h2>Head-to-head</h2>`;
+  if (lastRunWasDemo) {
+    html += `<p style="margin:0 0 0.75rem 0; font-size:0.85rem; color:var(--status-warn-text); font-weight:600;">Demo mode: Claude+playwright-mcp was cut off early, so these totals aren't a full-flow comparison -- see the per-step counts above.</p>`;
+  }
+  html += `<table><tr><th></th><th class="col-jev">Jev</th><th class="col-mcp">Claude + playwright-mcp</th><th>Delta</th></tr>`;
   for (const [label, jevVal, mcpVal, delta] of rows) {
     html += `<tr><th>${esc(label)}</th><td class="num">${esc(String(jevVal))}</td><td class="num">${esc(String(mcpVal))}</td><td class="num highlight">${esc(delta)}</td></tr>`;
   }
@@ -258,10 +477,13 @@ runBtn.onclick = () => {
   const flow = flowSelect.value;
   const engine = engineSelect.value;
   const headed = document.getElementById("headed-check").checked;
+  const demo = engine === "both" && demoCheck.checked;
+  lastRunWasDemo = demo;
+  demoBanner.classList.toggle("hidden", !demo);
   runBtn.disabled = true;
   runBtn.textContent = "Running...";
 
-  const es = new EventSource(`/run?flow=${encodeURIComponent(flow)}&engine=${encodeURIComponent(engine)}&headed=${headed}`);
+  const es = new EventSource(`/run?flow=${encodeURIComponent(flow)}&engine=${encodeURIComponent(engine)}&headed=${headed}&demo=${demo}`);
 
   if (engine === "both") {
     singleView.classList.add("hidden");

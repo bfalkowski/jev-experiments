@@ -213,13 +213,27 @@ def _run_mcp_engine(flow_key, headed):
     thread.join()
 
 
-def _run_both(flow_key, headed):
+# Demo mode: the Claude+playwright-mcp side is the slow, expensive one
+# (real npx cold-start, ~5s/step, ~$0.02-0.05/step) -- a full 16-18 step
+# run costs real money and takes a couple minutes just to *show someone
+# what the comparison looks like*. Demo mode lets the Jev side run its
+# complete, cheap flow while the MCP side is cut off after a handful of
+# steps -- enough to see it actually driving a real browser via real
+# tool calls, without paying for the whole run every time.
+DEMO_MCP_STEP_LIMIT = 3
+
+
+def _run_both(flow_key, headed, demo=False):
     """Runs the Jev engine and the Claude+playwright-mcp engine
     CONCURRENTLY against the same flow -- each in its own thread, each
     driving its own separate browser -- and merges their step events into
     one stream, tagged by 'engine', so the dashboard can render both
     columns filling in side by side in real time instead of running one
-    engine after the other."""
+    engine after the other.
+
+    demo=True: the Jev side still runs its full flow; the MCP side stops
+    itself after DEMO_MCP_STEP_LIMIT real steps (status events don't
+    count) instead of running to completion."""
     import queue
     import threading
 
@@ -240,18 +254,39 @@ def _run_both(flow_key, headed):
             q.put(("engine_done", "jev"))
 
     def mcp_worker():
-        agen = _mcp_flow_steps_async(flow_key, headed)
+        agen_factory = _mcp_flow_steps_async(flow_key, headed)
 
         async def consume():
+            # Held as a variable (rather than iterating agen_factory()
+            # inline) so that breaking out early in demo mode can still
+            # explicitly aclose() it -- that's what runs the flow's own
+            # `finally: await client.__aexit__(...)`, cleanly tearing
+            # down the npx playwright-mcp subprocess instead of leaving
+            # a suspended generator for garbage collection to eventually
+            # (and noisily) clean up.
+            gen = agen_factory()
+            real_step_count = 0
             try:
-                async for step in agen():
+                async for step in gen:
                     if "__error__" in step:
                         q.put(("error", ("mcp", step["__error__"])))
-                    else:
-                        step["engine"] = "mcp"
-                        q.put(("item", step))
+                        break
+                    step["engine"] = "mcp"
+                    q.put(("item", step))
+                    if demo and step.get("kind") != "status":
+                        real_step_count += 1
+                        if real_step_count >= DEMO_MCP_STEP_LIMIT:
+                            q.put(("item", {
+                                "kind": "status", "engine": "mcp",
+                                "message": f"Demo mode: stopping here after "
+                                f"{DEMO_MCP_STEP_LIMIT} steps (Jev keeps "
+                                f"running its full flow on the left).",
+                            }))
+                            break
             except Exception as e:
                 q.put(("error", ("mcp", str(e))))
+            finally:
+                await gen.aclose()
 
         try:
             asyncio.run(consume())
@@ -282,6 +317,9 @@ def run_flow():
     flow_key = request.args.get("flow", "local_app")
     headed = request.args.get("headed", "false").lower() == "true"
     engine = request.args.get("engine", "jev")
+    # Only meaningful for engine=="both" -- the front end only lets the
+    # demo checkbox be checked in that mode, and it's a no-op otherwise.
+    demo = request.args.get("demo", "false").lower() == "true"
 
     def emit_step(step):
         return f"event: step\ndata: {json.dumps(step)}\n\n"
@@ -299,7 +337,7 @@ def run_flow():
                 yield "event: done\ndata: {}\n\n"
                 return
             try:
-                for step in _run_both(flow_key, headed):
+                for step in _run_both(flow_key, headed, demo=demo):
                     if "__error__" in step:
                         yield emit_error(step["__error__"], step.get("engine"))
                     else:
