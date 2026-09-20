@@ -1,0 +1,180 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<title>Ticket Admin (local test app)</title>
+<style>
+  body { font-family: system-ui, sans-serif; max-width: 900px; margin: 2rem auto; padding: 0 1rem; }
+  table { width: 100%; border-collapse: collapse; margin-top: 1rem; }
+  th, td { text-align: left; padding: 0.5rem; border-bottom: 1px solid #ddd; }
+  [hidden] { display: none !important; }
+  .row-highlight { background: #fff3cd; }
+  form.panel, #login-screen { border: 1px solid #ccc; padding: 1rem; border-radius: 6px; max-width: 400px; margin-top: 1rem; }
+  label { display: block; margin-top: 0.5rem; font-size: 0.9rem; }
+  input, select, textarea { width: 100%; padding: 0.4rem; margin-top: 0.2rem; box-sizing: border-box; }
+  button { margin-top: 0.75rem; padding: 0.4rem 0.9rem; cursor: pointer; }
+</style>
+</head>
+<body>
+
+  <!--
+    Deliberately SAIL-grid-like: a login, a role switcher that gates which
+    actions render (mirrors real role-based access control), a table where
+    every row has identically-labeled "Edit"/"Delete" buttons (the actual
+    disambiguation problem a generated app's grid will have), and a create
+    form with multiple dropdowns. No backend -- all state lives in the
+    page's JS, reset on reload.
+  -->
+
+  <div id="login-screen">
+    <h2>Sign in</h2>
+    <label for="username">Username</label>
+    <input id="username" type="text" placeholder="Username" autocomplete="off">
+    <label for="password">Password</label>
+    <input id="password" type="password" placeholder="Password" autocomplete="off">
+    <button id="login-btn">Login</button>
+    <p style="font-size:0.8rem;color:#666">any username, password: demo123</p>
+  </div>
+
+  <div id="app" hidden>
+    <header style="display:flex; justify-content:space-between; align-items:center;">
+      <h2>Support Tickets</h2>
+      <label style="display:inline-block;">Role
+        <select id="role-select" aria-label="Current role">
+          <option value="Shopper">Shopper</option>
+          <option value="Merchant">Merchant</option>
+          <option value="Support">Support</option>
+        </select>
+      </label>
+    </header>
+
+    <button id="new-ticket-btn">New Ticket</button>
+
+    <table id="tickets-table" aria-label="Tickets">
+      <thead>
+        <tr><th>ID</th><th>Customer</th><th>Store</th><th>Status</th><th>Actions</th></tr>
+      </thead>
+      <tbody id="tickets-body"></tbody>
+    </table>
+
+    <form id="new-ticket-form" class="panel" hidden>
+      <h3>New Ticket</h3>
+      <label for="nt-customer">Customer name</label>
+      <input id="nt-customer" type="text" placeholder="Customer name">
+      <label for="nt-store">Store</label>
+      <select id="nt-store" aria-label="Store">
+        <option>Juniper Home Goods</option>
+        <option>Atlas Stationery</option>
+        <option>Harbor Knits</option>
+      </select>
+      <label for="nt-priority">Priority</label>
+      <select id="nt-priority" aria-label="Priority">
+        <option>Low</option>
+        <option>Medium</option>
+        <option>High</option>
+      </select>
+      <label><input id="nt-urgent" type="checkbox"> Urgent</label>
+      <label for="nt-description">Description</label>
+      <textarea id="nt-description" placeholder="Description" rows="3"></textarea>
+      <button type="button" id="nt-submit">Submit</button>
+      <button type="button" id="nt-cancel">Cancel</button>
+    </form>
+  </div>
+
+<script>
+let tickets = [
+  {id: 101, customer: "Alice Chen", store: "Juniper Home Goods", status: "Open"},
+  {id: 102, customer: "Marcus Webb", store: "Atlas Stationery", status: "In Progress"},
+  {id: 103, customer: "Priya Nair", store: "Harbor Knits", status: "Closed"},
+];
+let nextId = 104;
+
+function currentRole() {
+  return document.getElementById("role-select").value;
+}
+
+function render() {
+  const body = document.getElementById("tickets-body");
+  body.innerHTML = "";
+  const role = currentRole();
+  for (const t of tickets) {
+    const tr = document.createElement("tr");
+    tr.dataset.id = t.id;
+    tr.dataset.customer = t.customer;
+    if (t._editing) tr.classList.add("row-highlight");
+
+    const statusOptions = ["Open", "In Progress", "Closed"].map(s =>
+      `<option value="${s}" ${s === t.status ? "selected" : ""}>${s}</option>`
+    ).join("");
+
+    tr.innerHTML = `
+      <td>${t.id}</td>
+      <td>${t.customer}</td>
+      <td>${t.store}</td>
+      <td><select aria-label="Status" class="status-select" data-id="${t.id}">${statusOptions}</select></td>
+      <td>
+        <button class="edit-btn" data-id="${t.id}" aria-label="Edit">Edit</button>
+        ${role === "Merchant" ? `<button class="delete-btn" data-id="${t.id}" aria-label="Delete">Delete</button>` : ""}
+      </td>
+    `;
+    body.appendChild(tr);
+  }
+  attachRowHandlers();
+}
+
+function attachRowHandlers() {
+  document.querySelectorAll(".status-select").forEach(sel => {
+    sel.onchange = () => {
+      const t = tickets.find(t => t.id == sel.dataset.id);
+      if (t) t.status = sel.value;
+    };
+  });
+  document.querySelectorAll(".edit-btn").forEach(btn => {
+    btn.onclick = () => {
+      tickets.forEach(t => t._editing = false);
+      const t = tickets.find(t => t.id == btn.dataset.id);
+      if (t) t._editing = true;
+      window.__lastEdited = t ? t.id : null;
+      render();
+    };
+  });
+  document.querySelectorAll(".delete-btn").forEach(btn => {
+    btn.onclick = () => {
+      tickets = tickets.filter(t => t.id != btn.dataset.id);
+      render();
+    };
+  });
+}
+
+document.getElementById("login-btn").onclick = () => {
+  const u = document.getElementById("username").value.trim();
+  const p = document.getElementById("password").value;
+  if (u && p === "demo123") {
+    document.getElementById("login-screen").hidden = true;
+    document.getElementById("app").hidden = false;
+    render();
+  } else {
+    alert("Invalid credentials. Use any username, password: demo123");
+  }
+};
+
+document.getElementById("role-select").onchange = render;
+
+document.getElementById("new-ticket-btn").onclick = () => {
+  document.getElementById("new-ticket-form").hidden = false;
+};
+document.getElementById("nt-cancel").onclick = () => {
+  document.getElementById("new-ticket-form").hidden = true;
+};
+document.getElementById("nt-submit").onclick = () => {
+  const customer = document.getElementById("nt-customer").value.trim();
+  const store = document.getElementById("nt-store").value;
+  if (!customer) { alert("Customer name required"); return; }
+  tickets.push({id: nextId++, customer, store, status: "Open"});
+  document.getElementById("new-ticket-form").hidden = true;
+  document.getElementById("nt-customer").value = "";
+  render();
+};
+</script>
+</body>
+</html>

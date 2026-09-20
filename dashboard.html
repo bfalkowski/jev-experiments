@@ -1,0 +1,349 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<title>Jev Browser-Action Dashboard</title>
+<style>
+  body { font-family: system-ui, sans-serif; max-width: 1500px; margin: 2rem auto; padding: 0 1rem; color:#1a1a1a; }
+  h1 { font-size: 1.4rem; }
+  .controls { display:flex; gap:0.5rem; align-items:center; margin-bottom:1rem; flex-wrap:wrap; }
+  select, button { padding: 0.5rem 0.8rem; font-size:0.95rem; }
+  button { cursor:pointer; background:#2563eb; color:white; border:none; border-radius:4px; }
+  button:disabled { background:#93c5fd; cursor:not-allowed; }
+  .step { border:1px solid #e2e2e2; border-radius:6px; padding:0.75rem 1rem; margin-bottom:0.6rem; }
+  .step.verify { background:#f8fafc; }
+  .step.mcp_action { border-left:3px solid #7c3aed; }
+  .step.mcp_verify { background:#f8fafc; border-left:3px solid #7c3aed; }
+  .tool-call { font-size:0.8rem; color:#555; margin-left:1rem; }
+  .step-head { display:flex; justify-content:space-between; align-items:center; }
+  .badge { display:inline-block; padding:0.15rem 0.5rem; border-radius:10px; font-size:0.8rem; font-weight:600; }
+  .badge.ok { background:#dcfce7; color:#166534; }
+  .badge.bad { background:#fee2e2; color:#991b1b; }
+  .conf-high { color:#166534; }
+  .conf-mid { color:#92400e; }
+  .conf-low { color:#991b1b; }
+  .meta { font-size:0.85rem; color:#555; margin-top:0.25rem; }
+  code { background:#f1f5f9; padding:0.05rem 0.3rem; border-radius:3px; }
+  #summary { margin-top:1rem; padding:0.75rem 1rem; border-radius:6px; background:#f1f5f9; font-weight:600; }
+  .step-shot { display:block; margin-top:0.5rem; max-width:100%; border:1px solid #ddd; border-radius:4px; }
+  .split { display:flex; gap:1.25rem; align-items:flex-start; }
+  .split-col { flex:1; min-width:0; }
+  .split-col h2 { font-size:1.05rem; margin:0 0 0.5rem 0; }
+  .split-col .summary-line { font-size:0.85rem; color:#444; margin-top:0.5rem; padding:0.5rem 0.75rem; background:#f1f5f9; border-radius:6px; font-weight:600; }
+  .hidden { display:none; }
+  .status-line { font-size:0.85rem; color:#6b21a8; font-style:italic; padding:0.4rem 0.2rem; }
+  #comparison { margin-top:1.5rem; padding:1rem 1.25rem; border-radius:8px; background:#0f172a; color:#e2e8f0; }
+  #comparison h2 { font-size:1.05rem; margin:0 0 0.6rem 0; color:#fff; }
+  #comparison table { width:100%; border-collapse:collapse; font-size:0.9rem; }
+  #comparison td, #comparison th { padding:0.3rem 0.6rem; text-align:left; border-bottom:1px solid #334155; }
+  #comparison th { color:#94a3b8; font-weight:600; }
+  #comparison td.num { text-align:right; font-variant-numeric:tabular-nums; }
+  #comparison .highlight { color:#4ade80; font-weight:700; }
+</style>
+</head>
+<body>
+  <h1>Jev Browser-Action Dashboard</h1>
+  <div class="controls">
+    <select id="engine-select">
+      <option value="jev">Jev (System One model)</option>
+      <option value="mcp">Claude + real playwright-mcp</option>
+      <option value="both">Run both (split screen)</option>
+    </select>
+    <select id="flow-select">
+      {{FLOW_OPTIONS}}
+    </select>
+    <label style="font-size:0.9rem; display:flex; align-items:center; gap:0.3rem;">
+      <input type="checkbox" id="headed-check">
+      also open a real browser window (in addition to the embedded view below)
+    </label>
+    <button id="run-btn">Run</button>
+  </div>
+
+  <!-- Single-engine view (jev or mcp alone) -->
+  <div id="single-view">
+    <div id="results"></div>
+    <div id="summary" hidden></div>
+  </div>
+
+  <!-- Split-screen view (both engines, side by side) -->
+  <div id="split-view" class="hidden">
+    <div class="split">
+      <div class="split-col">
+        <h2>Jev (System One model)</h2>
+        <div id="results-jev"></div>
+        <div id="summary-jev" class="summary-line" hidden></div>
+      </div>
+      <div class="split-col">
+        <h2>Claude + real playwright-mcp</h2>
+        <div id="results-mcp"></div>
+        <div id="summary-mcp" class="summary-line" hidden></div>
+      </div>
+    </div>
+    <div id="comparison" hidden></div>
+  </div>
+
+<script>
+const runBtn = document.getElementById("run-btn");
+const flowSelect = document.getElementById("flow-select");
+const engineSelect = document.getElementById("engine-select");
+const singleView = document.getElementById("single-view");
+const splitView = document.getElementById("split-view");
+const results = document.getElementById("results");
+const summary = document.getElementById("summary");
+
+function confClass(c) {
+  if (c === null || c === undefined) return "";
+  if (c >= 0.9) return "conf-high";
+  if (c >= 0.7) return "conf-mid";
+  return "conf-low";
+}
+
+function esc(s) {
+  const d = document.createElement("div");
+  d.innerText = s ?? "";
+  return d.innerHTML;
+}
+
+// Builds the inner HTML for one step card -- shared by both the single-
+// engine view and each column of the split-screen view.
+function stepHtml(d) {
+  let html = `<div class="step-head"><strong>Step ${d.step}: ${esc(d.description)}</strong></div>`;
+
+  if (d.kind === "action") {
+    html += `<div class="meta">Jev picked: <code>${esc(d.picked.role)}</code> "${esc(d.picked.name)}"</div>`;
+    html += `<div class="meta">context: "${esc(d.picked.context)}"</div>`;
+    html += `<div class="meta"><span class="${confClass(d.confidence)}">confidence ${d.confidence.toFixed(2)}</span> &middot; ${d.latency_ms} ms &middot; ${d.input_tokens}/${d.output_tokens} in/out tokens &middot; ~$${d.cost_usd.toFixed(8)}</div>`;
+    if (d.ground_truth) {
+      const gt = d.ground_truth;
+      const badge = gt.correct
+        ? `<span class="badge ok">CORRECT</span>`
+        : `<span class="badge bad">WRONG</span>`;
+      html += `<div class="meta">expected: ${esc(JSON.stringify(gt.expected))} &middot; actual: ${esc(JSON.stringify(gt.actual))} ${badge}</div>`;
+    }
+  } else if (d.kind === "verify") {
+    html += `<div class="meta">claim: "${esc(d.claim)}"</div>`;
+    html += `<div class="meta">observed: "${esc(d.observed)}"</div>`;
+    html += `<div class="meta"><span class="${confClass(d.noul)}">supports claim: ${d.noul.toFixed(2)}</span> &middot; ${d.latency_ms} ms &middot; ${d.input_tokens}/${d.output_tokens} in/out tokens &middot; ~$${d.cost_usd.toFixed(8)}</div>`;
+  } else if (d.kind === "mcp_action") {
+    html += `<div class="meta">Claude used ${d.tool_call_count} tool call(s) &middot; ${d.input_tokens}/${d.output_tokens} in/out tokens &middot; ~$${d.cost_usd.toFixed(5)} &middot; ${d.latency_ms} ms</div>`;
+    for (const tc of d.tool_calls) {
+      html += `<div class="tool-call">&rarr; <code>${esc(tc.name)}</code>(${esc(JSON.stringify(tc.input))})</div>`;
+    }
+    if (d.error) {
+      html += `<div class="meta"><span class="badge bad">TOOL ERROR</span> ${esc(d.error)}</div>`;
+    }
+    if (d.no_op_suspected) {
+      html += `<div class="meta"><span class="badge bad">NO ACTION TAKEN</span> Claude only called read-only tools (e.g. browser_snapshot) this step -- the instruction likely wasn't actually carried out.</div>`;
+    }
+  } else if (d.kind === "mcp_verify") {
+    const badge = d.correct
+      ? `<span class="badge ok">CORRECT</span>`
+      : `<span class="badge bad">WRONG</span>`;
+    html += `<div class="meta">expected: ${esc(JSON.stringify(d.expected))} &middot; actual: ${esc(JSON.stringify(d.actual))} ${badge} &middot; ${d.latency_ms} ms</div>`;
+  }
+
+  // Embedded view of the site's state right after this step -- this is
+  // what replaces a separate popup browser window/tab: you see the actual
+  // page here, on this page, updating as each step completes.
+  if (d.screenshot) {
+    html += `<img class="step-shot" src="${d.screenshot}" alt="page state after step ${d.step}">`;
+  }
+  return html;
+}
+
+function renderStep(d, container) {
+  const div = document.createElement("div");
+  if (d.kind === "status") {
+    // A lightweight progress line, not a full step card -- used for
+    // phases before/between real steps (e.g. playwright-mcp cold-starting)
+    // so a column isn't just blank while something slow is happening.
+    div.className = "status-line";
+    div.textContent = "⏳ " + d.message;
+  } else {
+    div.className = "step " + d.kind;
+    div.innerHTML = stepHtml(d);
+  }
+  container.appendChild(div);
+  div.scrollIntoView({behavior: "smooth", block: "end"});
+}
+
+function renderError(message, container) {
+  const div = document.createElement("div");
+  div.className = "step";
+  div.innerHTML = `<strong style="color:#991b1b">Error:</strong> ${esc(message)}`;
+  container.appendChild(div);
+}
+
+// One tally object per engine column, so split-screen mode can track two
+// independent running summaries at once.
+function newTally() {
+  return { stepCount: 0, correctCount: 0, checkedCount: 0, latencies: [],
+           totalToolCalls: 0, totalInputTokens: 0, totalOutputTokens: 0, totalCost: 0 };
+}
+
+function applyToTally(t, d) {
+  if (d.kind === "status") return; // progress line, not a measured step
+  t.stepCount++;
+  t.latencies.push(d.latency_ms);
+  if (d.kind === "action" && d.ground_truth) {
+    t.checkedCount++;
+    if (d.ground_truth.correct) t.correctCount++;
+  }
+  if (d.kind === "mcp_verify") {
+    t.checkedCount++;
+    if (d.correct) t.correctCount++;
+  }
+  if (d.kind === "mcp_action") {
+    t.totalToolCalls += d.tool_call_count;
+  }
+  // Both engines now carry input_tokens/output_tokens/cost_usd (Jev's
+  // action/verify steps, and the MCP engine's mcp_action/mcp_verify
+  // steps) so cost accumulates the same way regardless of which engine.
+  if (typeof d.input_tokens === "number") t.totalInputTokens += d.input_tokens;
+  if (typeof d.output_tokens === "number") t.totalOutputTokens += d.output_tokens;
+  if (typeof d.cost_usd === "number") t.totalCost += d.cost_usd;
+}
+
+function summaryText(t) {
+  const avgLatency = t.latencies.length
+    ? Math.round(t.latencies.reduce((a, b) => a + b, 0) / t.latencies.length)
+    : 0;
+  const totalLatency = t.latencies.reduce((a, b) => a + b, 0);
+  let text = `${t.stepCount} steps` +
+    (t.checkedCount ? ` · ${t.correctCount}/${t.checkedCount} ground-truth checks correct` : ` · no ground-truth checks`) +
+    ` · avg step latency ${avgLatency} ms · total ${totalLatency} ms`;
+  if (t.totalToolCalls) {
+    text += ` · ${t.totalToolCalls} tool calls`;
+  }
+  text += ` · ${t.totalInputTokens}/${t.totalOutputTokens} in/out tokens · ~$${t.totalCost.toFixed(5)}`;
+  return text;
+}
+
+// Head-to-head analysis shown once BOTH engines have finished a
+// split-screen run -- the per-column summaries above already give each
+// engine's own numbers, this puts the ratios between them in one place
+// instead of making you do the division yourself.
+function renderComparison(tallyJev, tallyMcp) {
+  const box = document.getElementById("comparison");
+  const totalLatency = (t) => t.latencies.reduce((a, b) => a + b, 0);
+  const jevLatency = totalLatency(tallyJev);
+  const mcpLatency = totalLatency(tallyMcp);
+  const jevCost = tallyJev.totalCost;
+  const mcpCost = tallyMcp.totalCost;
+
+  const ratio = (a, b) => (b > 0 ? (a / b) : null);
+  const fmtRatio = (r) => (r === null ? "n/a" : r >= 1 ? `${r.toFixed(1)}x` : `${(1 / r).toFixed(1)}x faster/cheaper the other way`);
+
+  const speedRatio = ratio(mcpLatency, jevLatency);
+  const costRatio = ratio(mcpCost, jevCost);
+
+  const rows = [
+    ["Steps", tallyJev.stepCount, tallyMcp.stepCount, ""],
+    ["Ground truth correct", `${tallyJev.correctCount}/${tallyJev.checkedCount}`, `${tallyMcp.correctCount}/${tallyMcp.checkedCount}`, ""],
+    ["Total latency", `${jevLatency} ms`, `${mcpLatency} ms`, speedRatio !== null ? `MCP took ${fmtRatio(speedRatio)} as long` : ""],
+    ["Total cost", `$${jevCost.toFixed(5)}`, `$${mcpCost.toFixed(5)}`, costRatio !== null ? `MCP cost ${fmtRatio(costRatio)} as much` : ""],
+    ["Input/output tokens", `${tallyJev.totalInputTokens}/${tallyJev.totalOutputTokens}`, `${tallyMcp.totalInputTokens}/${tallyMcp.totalOutputTokens}`, ""],
+  ];
+
+  let html = `<h2>Head-to-head</h2><table><tr><th></th><th>Jev</th><th>Claude + playwright-mcp</th><th>Delta</th></tr>`;
+  for (const [label, jevVal, mcpVal, delta] of rows) {
+    html += `<tr><th>${esc(label)}</th><td class="num">${esc(String(jevVal))}</td><td class="num">${esc(String(mcpVal))}</td><td class="num highlight">${esc(delta)}</td></tr>`;
+  }
+  html += `</table>`;
+  box.innerHTML = html;
+  box.hidden = false;
+}
+
+runBtn.onclick = () => {
+  const flow = flowSelect.value;
+  const engine = engineSelect.value;
+  const headed = document.getElementById("headed-check").checked;
+  runBtn.disabled = true;
+  runBtn.textContent = "Running...";
+
+  const es = new EventSource(`/run?flow=${encodeURIComponent(flow)}&engine=${encodeURIComponent(engine)}&headed=${headed}`);
+
+  if (engine === "both") {
+    singleView.classList.add("hidden");
+    splitView.classList.remove("hidden");
+    const resultsJev = document.getElementById("results-jev");
+    const resultsMcp = document.getElementById("results-mcp");
+    const summaryJev = document.getElementById("summary-jev");
+    const summaryMcp = document.getElementById("summary-mcp");
+    resultsJev.innerHTML = "";
+    resultsMcp.innerHTML = "";
+    summaryJev.hidden = true;
+    summaryMcp.hidden = true;
+    document.getElementById("comparison").hidden = true;
+    const tallyJev = newTally();
+    const tallyMcp = newTally();
+
+    es.addEventListener("step", (e) => {
+      const d = JSON.parse(e.data);
+      if (d.engine === "mcp") {
+        renderStep(d, resultsMcp);
+        applyToTally(tallyMcp, d);
+      } else {
+        renderStep(d, resultsJev);
+        applyToTally(tallyJev, d);
+      }
+    });
+
+    es.addEventListener("error_event", (e) => {
+      const d = JSON.parse(e.data);
+      renderError(d.message, d.engine === "mcp" ? resultsMcp : resultsJev);
+    });
+
+    es.addEventListener("done", () => {
+      es.close();
+      runBtn.disabled = false;
+      runBtn.textContent = "Run";
+      summaryJev.hidden = false;
+      summaryMcp.hidden = false;
+      summaryJev.textContent = summaryText(tallyJev);
+      summaryMcp.textContent = summaryText(tallyMcp);
+      renderComparison(tallyJev, tallyMcp);
+    });
+
+    es.onerror = () => {
+      runBtn.disabled = false;
+      runBtn.textContent = "Run";
+    };
+    return;
+  }
+
+  // Single-engine view (jev or mcp alone)
+  splitView.classList.add("hidden");
+  singleView.classList.remove("hidden");
+  results.innerHTML = "";
+  summary.hidden = true;
+  const tally = newTally();
+
+  es.addEventListener("step", (e) => {
+    const d = JSON.parse(e.data);
+    renderStep(d, results);
+    applyToTally(tally, d);
+  });
+
+  es.addEventListener("error_event", (e) => {
+    const d = JSON.parse(e.data);
+    renderError(d.message, results);
+  });
+
+  es.addEventListener("done", () => {
+    es.close();
+    runBtn.disabled = false;
+    runBtn.textContent = "Run";
+    summary.hidden = false;
+    summary.textContent = summaryText(tally);
+  });
+
+  es.onerror = () => {
+    // connection-level error (e.g. server died) -- native EventSource event, not our custom one
+    runBtn.disabled = false;
+    runBtn.textContent = "Run";
+  };
+};
+</script>
+</body>
+</html>
