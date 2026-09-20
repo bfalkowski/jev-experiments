@@ -7,10 +7,10 @@ general-purpose Claude tool-use loop driving the real
 [`microsoft/playwright-mcp`](https://github.com/microsoft/playwright-mcp)
 server.
 
-The motivating problem: evaluating AI-generated UIs (e.g. Appian Composer's
-dev-agent-generated SAIL sites) via accessibility-tree browser automation
-runs into pages with repeated, near-identical elements -- three rows each
-with their own "Edit" button, three "Status" dropdowns with the same label.
+The motivating problem: evaluating AI-generated UIs (e.g. a low-code
+platform's dev-agent-generated app screens) via accessibility-tree browser
+automation runs into pages with repeated, near-identical elements -- three
+rows each with their own "Edit" button, three "Status" dropdowns with the same label.
 Picking the *right* one requires using surrounding context (which row,
 which section), not just the accessible name. This repo tests whether a
 narrow, purpose-built decision model (Jev) actually does that better/
