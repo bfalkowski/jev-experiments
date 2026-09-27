@@ -6,9 +6,11 @@ Every engine answers the same two kinds of question from the same input:
   verify(claim, observed)   -> True / False (does the evidence support the claim?)
 
 Jev answers through TypeSafe's typed `choice` and `noul` questions.
-Constrained Claude answers through a single Messages call with a forced
-tool whose only argument is the answer (an index limited to the valid
-positions, or a boolean), so it cannot do anything except answer.
+Constrained Claude answers through a single Messages call with structured
+output: a JSON schema whose only field is the answer (an index limited to
+the valid positions, or a boolean), so it cannot say anything except the
+answer. (A forced tool call does the same job, but claude-opus-5-5 rejects
+forced tool_choice, so structured output is used for every Claude model.)
 
 Engines never raise on API errors; they return a result with `error` set
 so a long run keeps going and the failure is visible in the results.
@@ -111,12 +113,12 @@ PICK_SYSTEM = (
     "You get a goal and a numbered list of the page's interactive elements. "
     "Several elements can share the same name, so use each element's context "
     "(the text around it, such as which row it is in) to choose. "
-    "Answer only by calling the pick tool with the number of the one correct element."
+    "Answer with the number of the one correct element."
 )
 VERIFY_SYSTEM = (
     "You check whether evidence observed on a web page supports a claim about it. "
-    "Answer only by calling the verdict tool: supported is true if the evidence "
-    "supports the claim and false otherwise."
+    "Answer with supported set to true if the evidence supports the claim "
+    "and false otherwise."
 )
 
 _client = None
@@ -130,6 +132,17 @@ def _anthropic():
     return _client
 
 
+# Room for any reasoning the model does before the JSON answer.
+MAX_TOKENS = 2048
+
+
+def _json_answer(resp):
+    """Structured output: the answer is the JSON text block, constrained by the
+    schema. Recorded stop_reason lets the analysis spot truncated answers."""
+    text = "".join(getattr(b, "text", "") for b in resp.content if getattr(b, "type", "") == "text")
+    return json.loads(text)
+
+
 def _usage_dict(u):
     return {k: getattr(u, k, 0) or 0 for k in
             ("input_tokens", "output_tokens", "cache_read_input_tokens", "cache_creation_input_tokens")}
@@ -137,56 +150,50 @@ def _usage_dict(u):
 
 def claude_pick(goal, candidates, model, with_context=True):
     lines = [f"{i}. {candidate_line(e, with_context)}" for i, e in enumerate(candidates)]
-    tool = {
-        "name": "pick",
-        "description": "Choose the element to act on.",
-        "input_schema": {
-            "type": "object",
-            "properties": {"index": {"type": "integer", "enum": list(range(len(candidates)))}},
-            "required": ["index"],
-        },
+    schema = {
+        "type": "object",
+        "properties": {"index": {"type": "integer", "enum": list(range(len(candidates)))}},
+        "required": ["index"],
+        "additionalProperties": False,
     }
     content = f"Goal: {goal}\n\nElements:\n" + "\n".join(lines)
     try:
         start = time.perf_counter()
         resp = _anthropic().messages.create(
-            model=model, max_tokens=64, system=PICK_SYSTEM,
-            tools=[tool], tool_choice={"type": "tool", "name": "pick"},
+            model=model, max_tokens=MAX_TOKENS, system=PICK_SYSTEM,
+            output_config={"format": {"type": "json_schema", "schema": schema}},
             messages=[{"role": "user", "content": content}],
         )
         elapsed = time.perf_counter() - start
-        block = next(b for b in resp.content if b.type == "tool_use")
         usage = _usage_dict(resp.usage)
-        return {"answer": int(block.input["index"]), "confidence": None, "latency_s": elapsed,
-                "usage": usage, "cost_usd": price(model, usage), "model": model, "error": None}
+        return {"answer": int(_json_answer(resp)["index"]), "confidence": None, "latency_s": elapsed,
+                "usage": usage, "cost_usd": price(model, usage), "model": model,
+                "stop_reason": getattr(resp, "stop_reason", None), "error": None}
     except Exception as e:  # noqa: BLE001
         return {"answer": None, "error": f"{type(e).__name__}: {e}", "model": model,
                 "latency_s": None, "usage": {}, "cost_usd": 0.0}
 
 
 def claude_verify(claim, observed, model):
-    tool = {
-        "name": "verdict",
-        "description": "Say whether the evidence supports the claim.",
-        "input_schema": {
-            "type": "object",
-            "properties": {"supported": {"type": "boolean"}},
-            "required": ["supported"],
-        },
+    schema = {
+        "type": "object",
+        "properties": {"supported": {"type": "boolean"}},
+        "required": ["supported"],
+        "additionalProperties": False,
     }
     content = f"Claim: {claim}\n\nObserved: {observed}"
     try:
         start = time.perf_counter()
         resp = _anthropic().messages.create(
-            model=model, max_tokens=64, system=VERIFY_SYSTEM,
-            tools=[tool], tool_choice={"type": "tool", "name": "verdict"},
+            model=model, max_tokens=MAX_TOKENS, system=VERIFY_SYSTEM,
+            output_config={"format": {"type": "json_schema", "schema": schema}},
             messages=[{"role": "user", "content": content}],
         )
         elapsed = time.perf_counter() - start
-        block = next(b for b in resp.content if b.type == "tool_use")
         usage = _usage_dict(resp.usage)
-        return {"answer": bool(block.input["supported"]), "confidence": None, "latency_s": elapsed,
-                "usage": usage, "cost_usd": price(model, usage), "model": model, "error": None}
+        return {"answer": bool(_json_answer(resp)["supported"]), "confidence": None, "latency_s": elapsed,
+                "usage": usage, "cost_usd": price(model, usage), "model": model,
+                "stop_reason": getattr(resp, "stop_reason", None), "error": None}
     except Exception as e:  # noqa: BLE001
         return {"answer": None, "error": f"{type(e).__name__}: {e}", "model": model,
                 "latency_s": None, "usage": {}, "cost_usd": 0.0}
