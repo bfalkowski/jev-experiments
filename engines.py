@@ -150,7 +150,7 @@ def claude_pick(goal, candidates, model, with_context=True):
     try:
         start = time.perf_counter()
         resp = _anthropic().messages.create(
-            model=model, max_tokens=64, temperature=0, system=PICK_SYSTEM,
+            model=model, max_tokens=64, system=PICK_SYSTEM,
             tools=[tool], tool_choice={"type": "tool", "name": "pick"},
             messages=[{"role": "user", "content": content}],
         )
@@ -178,7 +178,7 @@ def claude_verify(claim, observed, model):
     try:
         start = time.perf_counter()
         resp = _anthropic().messages.create(
-            model=model, max_tokens=64, temperature=0, system=VERIFY_SYSTEM,
+            model=model, max_tokens=64, system=VERIFY_SYSTEM,
             tools=[tool], tool_choice={"type": "tool", "name": "verdict"},
             messages=[{"role": "user", "content": content}],
         )

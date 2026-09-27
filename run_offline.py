@@ -145,14 +145,14 @@ def main():
             _, pick_fn, verify_fn = CONDITIONS[cond]
             if p["kind"] == "pick":
                 res = pick_fn(p["goals"][ph], p["candidates"])
-                correct = None if res["answer"] is None else res["answer"] == p["label"]
+                correct = None if res["answer"] is None else res["answer"] in p.get("labels", [p["label"]])
             else:
                 res = verify_fn(p["claim"], p["observed"])
                 correct = None if res["answer"] is None else res["answer"] == p["label"]
             row = {
                 "condition": cond, "point_id": pid, "kind": p["kind"], "case_type": p["case_type"],
                 "site": p["site"], "phrasing": ph, "repeat": rep,
-                "label": p["label"], "correct": correct,
+                "label": p["label"], "labels": p.get("labels"), "correct": correct,
                 "n_candidates": len(p.get("candidates", [])),
                 "warmup": cond not in warmed,
                 "ts": datetime.now(timezone.utc).isoformat(timespec="milliseconds"),

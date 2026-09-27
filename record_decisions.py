@@ -50,9 +50,18 @@ class Recorder:
         self.page = page
         self.points = []
 
-    def record(self, pid, site, case_type, goals, target_selector, action, value=None, meta=None):
+    def record(self, pid, site, case_type, goals, target_selector, action, value=None, meta=None,
+               alt_selectors=()):
+        """alt_selectors: other elements that do exactly the same thing (e.g. a
+        product image and its title both open the product page). Picking any
+        of them counts as correct."""
         elements = get_interactive_elements(self.page)
         idx = label_index(self.page, elements, target_selector)
+        labels = [idx] if idx is not None else []
+        for alt in alt_selectors:
+            j = label_index(self.page, elements, alt)
+            if j is not None and j not in labels:
+                labels.append(j)
         shot = os.path.join(SCREEN_DIR, f"{pid}.jpg")
         self.page.screenshot(path=shot, type="jpeg", quality=55, full_page=True)
         self.points.append({
@@ -65,7 +74,9 @@ class Recorder:
             "value": value,
             "candidates": elements,
             "label": idx,
+            "labels": labels,
             "target_selector": target_selector,
+            "alt_selectors": list(alt_selectors),
             "url": self.page.url,
             "screenshot": shot,
             "meta": meta or {},
@@ -81,7 +92,7 @@ class Recorder:
         for that observation)."""
         self.points.append({
             "id": pid, "site": site, "kind": "verify", "case_type": "verify",
-            "claim": claim, "observed": observed, "label": bool(label),
+            "claim": claim, "observed": observed, "label": bool(label), "labels": [bool(label)],
             "url": self.page.url,
         })
         print(f"  {pid:<32} verify label={label}  observed={observed[:60]!r}")
@@ -275,7 +286,8 @@ def record_sauce(rec, base_url):
                    [f"open the product page for '{name}'",
                     f"see the details of the {name}",
                     f"click through to the {name} listing"],
-                   f'[data-test="item-{item_id}-title-link"]', "click")
+                   f'[data-test="item-{item_id}-title-link"]', "click",
+                   alt_selectors=[f'[data-test="item-{item_id}-img-link"]'])
     rec.record("sauce-sort", "saucedemo", "unique",
                ["sort the products by price, low to high", "change the product sort order",
                 "order the list so the cheapest items come first"],

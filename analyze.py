@@ -68,6 +68,12 @@ def main():
     errors = [r for r in load_jsonl(f"{RESULTS}/main.jsonl") if r.get("error") is not None]
     agent = load_jsonl(f"{RESULTS}/agent.jsonl")
     points = {p["id"]: p for p in load_jsonl("data/decisions.jsonl")}
+    # Recompute correctness from the current labels so a label fix in the
+    # dataset applies to results that were already collected.
+    for r in rows:
+        p = points[r["point_id"]]
+        r["correct"] = (r["answer"] in p.get("labels", [p["label"]])) if p["kind"] == "pick" \
+            else (r["answer"] == p["label"])
 
     summary = {"n_points": {
         "pick": sum(1 for p in points.values() if p["kind"] == "pick"),
