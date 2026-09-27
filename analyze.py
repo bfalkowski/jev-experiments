@@ -119,8 +119,11 @@ def main():
         lat = [r["latency_s"] for r in cr if not r["warmup"] and r["latency_s"] is not None]
         d["latency_ms"] = {"p50": pct(lat, 0.5) * 1000 if lat else None,
                            "p95": pct(lat, 0.95) * 1000 if lat else None}
+        n_correct = sum(1 for r in picks if r["correct"])
+        pick_cost = sum(r["cost_usd"] for r in picks)
         d["cost_usd"] = {"total": sum(r["cost_usd"] for r in cr),
-                         "per_call": statistics.mean(r["cost_usd"] for r in cr)}
+                         "per_call": statistics.mean(r["cost_usd"] for r in cr),
+                         "per_correct_pick": (pick_cost / n_correct) if n_correct else None}
         tin = [r["usage"].get("input_tokens", 0) for r in picks]
         d["input_tokens_per_pick"] = statistics.mean(tin) if tin else None
 
@@ -218,6 +221,28 @@ def make_charts(summary):
         ax.spines[s].set_visible(False)
     fig.tight_layout()
     fig.savefig(f"{RESULTS}/fig_accuracy.png", dpi=160)
+    plt.close(fig)
+
+    # Headline: accuracy on hard cases against cost per correct decision.
+    fig, ax = plt.subplots(figsize=(7, 3.6))
+    for c in order:
+        d = summary["conditions"][c]
+        hard = [d["pick_by_group"][g]["acc"] for g in ("repeated", "lookalike-dropdown") if g in d["pick_by_group"]]
+        cpc = d["cost_usd"]["per_correct_pick"]
+        if not hard or not cpc:
+            continue
+        y = sum(hard) / len(hard) * 100
+        ax.scatter([cpc], [y], s=60, color=accent)
+        ax.annotate(c, (cpc, y), textcoords="offset points", xytext=(6, 4), color=ink)
+    ax.set_xscale("log")
+    ax.set_xlabel("Cost per correct pick (USD, log scale)")
+    ax.set_ylabel("Accuracy on hard cases (%)")
+    ax.set_ylim(0, 105)
+    ax.grid(color=grid)
+    for s in ("top", "right"):
+        ax.spines[s].set_visible(False)
+    fig.tight_layout()
+    fig.savefig(f"{RESULTS}/fig_accuracy_vs_cost.png", dpi=160)
     plt.close(fig)
 
     # Accuracy vs number of look-alike rows.
