@@ -18,7 +18,7 @@
 <body>
 
   <!--
-    Deliberately SAIL-grid-like: a login, a role switcher that gates which
+    Deliberately data-grid-like: a login, a role switcher that gates which
     actions render (mirrors real role-based access control), a table where
     every row has identically-labeled "Edit"/"Delete" buttons (the actual
     disambiguation problem a generated app's grid will have), and a create
@@ -82,12 +82,25 @@
   </div>
 
 <script>
+// Optional ?rows=N (N > 3) adds more look-alike rows after the original
+// three, so experiments can scale the number of identical Edit/Status
+// controls without changing the first three rows' content.
+const EXTRA_CUSTOMERS = ["Diego Ramirez", "Hannah Okafor", "Tom Lindqvist", "Grace Liu",
+  "Omar Haddad", "Sofia Rossi", "Ben Carter", "Mei Tanaka", "Luca Moretti", "Ada Nwosu",
+  "Kenji Sato", "Nora Byrne", "Ravi Menon", "Elena Petrova", "Sam Whitaker", "Iris Nakamura",
+  "Jonah Feld", "Leila Karimi", "Owen Price", "Zara Ali", "Felix Braun", "Maya Cohen"];
+const STORES = ["Juniper Home Goods", "Atlas Stationery", "Harbor Knits"];
+const STATUSES = ["Open", "In Progress", "Closed"];
 let tickets = [
   {id: 101, customer: "Alice Chen", store: "Juniper Home Goods", status: "Open"},
   {id: 102, customer: "Marcus Webb", store: "Atlas Stationery", status: "In Progress"},
   {id: 103, customer: "Priya Nair", store: "Harbor Knits", status: "Closed"},
 ];
-let nextId = 104;
+const requestedRows = parseInt(new URLSearchParams(location.search).get("rows") || "3", 10);
+for (let i = 0; tickets.length < Math.min(requestedRows, 3 + EXTRA_CUSTOMERS.length); i++) {
+  tickets.push({id: 104 + i, customer: EXTRA_CUSTOMERS[i], store: STORES[i % 3], status: STATUSES[i % 3]});
+}
+let nextId = 101 + tickets.length;
 
 function currentRole() {
   return document.getElementById("role-select").value;

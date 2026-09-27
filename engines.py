@@ -1,0 +1,212 @@
+"""Decision engines for the offline element-selection experiment.
+
+Every engine answers the same two kinds of question from the same input:
+
+  pick(goal, candidates)    -> index into candidates
+  verify(claim, observed)   -> True / False (does the evidence support the claim?)
+
+Jev answers through TypeSafe's typed `choice` and `noul` questions.
+Constrained Claude answers through a single Messages call with a forced
+tool whose only argument is the answer (an index limited to the valid
+positions, or a boolean), so it cannot do anything except answer.
+
+Engines never raise on API errors; they return a result with `error` set
+so a long run keeps going and the failure is visible in the results.
+"""
+
+import json
+import os
+import time
+import urllib.error
+import urllib.request
+
+from typesafe_client import load_dotenv
+
+load_dotenv()
+
+# Prices per million tokens. Checked 2026-09-27:
+#   https://platform.claude.com/docs/en/about-claude/pricing
+#   https://docs.typesafe.ai/models ($0.042 per million input tokens, output free)
+PRICES = {
+    "jev-latest": {"in": 0.042, "out": 0.0, "cache_read": 0.0, "cache_write": 0.0},
+    "claude-haiku-4-5": {"in": 1.0, "out": 5.0, "cache_read": 0.10, "cache_write": 1.25},
+    "claude-sonnet-5": {"in": 2.0, "out": 10.0, "cache_read": 0.20, "cache_write": 2.50},
+    "claude-opus-5-5": {"in": 4.0, "out": 20.0, "cache_read": 0.20, "cache_write": 5.0},
+}
+
+
+def price(model, usage):
+    p = PRICES[model]
+    return (usage.get("input_tokens", 0) * p["in"]
+            + usage.get("output_tokens", 0) * p["out"]
+            + usage.get("cache_read_input_tokens", 0) * p["cache_read"]
+            + usage.get("cache_creation_input_tokens", 0) * p["cache_write"]) / 1_000_000
+
+
+def candidate_line(e, with_context):
+    """The exact text both Jev and Claude see for one candidate. Kept in one
+    place so the two engines cannot drift apart."""
+    if with_context:
+        return f'{e["role"]}: "{e["name"]}" (context: "{e["context"]}")'
+    return f'{e["role"]}: "{e["name"]}"'
+
+
+# ------------------------------------------------------------------ Jev
+
+TYPESAFE_URL = "https://api.typesafe.ai/v1/systemone"
+JEV_MODEL = "jev-latest"
+
+
+def _typesafe(state, questions):
+    payload = json.dumps({"state": state, "model": JEV_MODEL, "questions": questions}).encode()
+    req = urllib.request.Request(TYPESAFE_URL, data=payload, method="POST", headers={
+        "Authorization": f"Bearer {os.environ.get('TYPESAFE_API_KEY', '')}",
+        "Content-Type": "application/json",
+    })
+    start = time.perf_counter()
+    with urllib.request.urlopen(req, timeout=60) as resp:
+        body = json.loads(resp.read().decode())
+    return body, time.perf_counter() - start
+
+
+def jev_pick(goal, candidates, with_context=True):
+    lines = [candidate_line(e, with_context) for e in candidates]
+    state = {"goal": goal, "page_elements": lines}
+    questions = {"target": {
+        "type": "choice",
+        "instructions": f"Which page element should be interacted with to: {goal}",
+        "criteria": {str(i): line for i, line in enumerate(lines)},
+    }}
+    try:
+        body, elapsed = _typesafe(state, questions)
+        ans = body["answers"]["target"]
+        usage = body.get("usage", {}) or {}
+        return {"answer": int(ans["choice"]), "confidence": ans.get("confidence"),
+                "latency_s": elapsed, "usage": usage, "cost_usd": price(JEV_MODEL, usage),
+                "model": JEV_MODEL, "error": None}
+    except Exception as e:  # noqa: BLE001 -- recorded, not swallowed
+        return {"answer": None, "error": f"{type(e).__name__}: {e}", "model": JEV_MODEL,
+                "latency_s": None, "usage": {}, "cost_usd": 0.0}
+
+
+def jev_verify(claim, observed):
+    state = {"claim": claim, "observed": observed}
+    questions = {"verdict": {"type": "noul",
+                             "instructions": "Does the observed evidence support the claim?"}}
+    try:
+        body, elapsed = _typesafe(state, questions)
+        score = body["answers"]["verdict"]["noul"]
+        usage = body.get("usage", {}) or {}
+        return {"answer": bool(score >= 0.5), "confidence": score, "latency_s": elapsed,
+                "usage": usage, "cost_usd": price(JEV_MODEL, usage), "model": JEV_MODEL, "error": None}
+    except Exception as e:  # noqa: BLE001
+        return {"answer": None, "error": f"{type(e).__name__}: {e}", "model": JEV_MODEL,
+                "latency_s": None, "usage": {}, "cost_usd": 0.0}
+
+
+# ---------------------------------------------------------- constrained Claude
+
+PICK_SYSTEM = (
+    "You pick which element on a web page a browser test should act on. "
+    "You get a goal and a numbered list of the page's interactive elements. "
+    "Several elements can share the same name, so use each element's context "
+    "(the text around it, such as which row it is in) to choose. "
+    "Answer only by calling the pick tool with the number of the one correct element."
+)
+VERIFY_SYSTEM = (
+    "You check whether evidence observed on a web page supports a claim about it. "
+    "Answer only by calling the verdict tool: supported is true if the evidence "
+    "supports the claim and false otherwise."
+)
+
+_client = None
+
+
+def _anthropic():
+    global _client
+    if _client is None:
+        from anthropic import Anthropic
+        _client = Anthropic()
+    return _client
+
+
+def _usage_dict(u):
+    return {k: getattr(u, k, 0) or 0 for k in
+            ("input_tokens", "output_tokens", "cache_read_input_tokens", "cache_creation_input_tokens")}
+
+
+def claude_pick(goal, candidates, model, with_context=True):
+    lines = [f"{i}. {candidate_line(e, with_context)}" for i, e in enumerate(candidates)]
+    tool = {
+        "name": "pick",
+        "description": "Choose the element to act on.",
+        "input_schema": {
+            "type": "object",
+            "properties": {"index": {"type": "integer", "enum": list(range(len(candidates)))}},
+            "required": ["index"],
+        },
+    }
+    content = f"Goal: {goal}\n\nElements:\n" + "\n".join(lines)
+    try:
+        start = time.perf_counter()
+        resp = _anthropic().messages.create(
+            model=model, max_tokens=64, temperature=0, system=PICK_SYSTEM,
+            tools=[tool], tool_choice={"type": "tool", "name": "pick"},
+            messages=[{"role": "user", "content": content}],
+        )
+        elapsed = time.perf_counter() - start
+        block = next(b for b in resp.content if b.type == "tool_use")
+        usage = _usage_dict(resp.usage)
+        return {"answer": int(block.input["index"]), "confidence": None, "latency_s": elapsed,
+                "usage": usage, "cost_usd": price(model, usage), "model": model, "error": None}
+    except Exception as e:  # noqa: BLE001
+        return {"answer": None, "error": f"{type(e).__name__}: {e}", "model": model,
+                "latency_s": None, "usage": {}, "cost_usd": 0.0}
+
+
+def claude_verify(claim, observed, model):
+    tool = {
+        "name": "verdict",
+        "description": "Say whether the evidence supports the claim.",
+        "input_schema": {
+            "type": "object",
+            "properties": {"supported": {"type": "boolean"}},
+            "required": ["supported"],
+        },
+    }
+    content = f"Claim: {claim}\n\nObserved: {observed}"
+    try:
+        start = time.perf_counter()
+        resp = _anthropic().messages.create(
+            model=model, max_tokens=64, temperature=0, system=VERIFY_SYSTEM,
+            tools=[tool], tool_choice={"type": "tool", "name": "verdict"},
+            messages=[{"role": "user", "content": content}],
+        )
+        elapsed = time.perf_counter() - start
+        block = next(b for b in resp.content if b.type == "tool_use")
+        usage = _usage_dict(resp.usage)
+        return {"answer": bool(block.input["supported"]), "confidence": None, "latency_s": elapsed,
+                "usage": usage, "cost_usd": price(model, usage), "model": model, "error": None}
+    except Exception as e:  # noqa: BLE001
+        return {"answer": None, "error": f"{type(e).__name__}: {e}", "model": model,
+                "latency_s": None, "usage": {}, "cost_usd": 0.0}
+
+
+# ------------------------------------------------------------ conditions
+
+HAIKU = "claude-haiku-4-5"
+OPUS = "claude-opus-5-5"
+
+CONDITIONS = {
+    # id: (description, pick_fn, verify_fn or None)
+    "J": ("Jev, with row context",
+          lambda g, c: jev_pick(g, c, True), jev_verify),
+    "J-nc": ("Jev, no context",
+             lambda g, c: jev_pick(g, c, False), None),
+    "C-S": (f"Constrained Claude ({HAIKU}), with row context",
+            lambda g, c: claude_pick(g, c, HAIKU, True), lambda cl, ob: claude_verify(cl, ob, HAIKU)),
+    "C-S-nc": (f"Constrained Claude ({HAIKU}), no context",
+               lambda g, c: claude_pick(g, c, HAIKU, False), None),
+    "C-L": (f"Constrained Claude ({OPUS}), with row context",
+            lambda g, c: claude_pick(g, c, OPUS, True), lambda cl, ob: claude_verify(cl, ob, OPUS)),
+}

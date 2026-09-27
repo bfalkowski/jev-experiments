@@ -7,12 +7,12 @@ move to Jev's Choice/Noul primitives.
 
 Two targets:
   - SauceDemo (default): the public demo jev-browser's own README uses.
-  - local_test_app.html, served locally: a small SAIL-grid-like app
+  - local_test_app.html, served locally: a small data-grid-style app
     (login, role switch gating which buttons render, a ticket table
     with identically-labeled Edit/Delete buttons per row, a create
     form with multiple dropdowns) built specifically to stress-test
-    disambiguation and role-based verification -- the actual shape of
-    your Composer eval problem, without needing real Composer output.
+    disambiguation and role-based verification, the same shape as
+    evaluating a generated business app's screens.
 
 Serve the local app first:
     python3 -m http.server 8000

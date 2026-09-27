@@ -9,7 +9,7 @@ Two tests:
      cookbook pattern, but pointed at a toy version of the actual problem:
      does an observed UI state (e.g. a rendered dropdown) match a claim
      about what the spec says it should be. This is the pattern worth
-     validating before trusting it for real SAIL-correctness checks.
+     validating before trusting it for real UI-correctness checks.
 
 Usage:
     export TYPESAFE_API_KEY=sk-...
@@ -129,7 +129,7 @@ def test_2_claim_verification():
     the same 0.8 auto-accept threshold they use, routing anything below it
     to human review instead of trusting it blindly.
 
-    Toy example standing in for a real SAIL-correctness check: does the
+    Toy example standing in for a real UI-correctness check: does the
     rendered dropdown's option set match what the record-type spec says
     it should contain.
     """

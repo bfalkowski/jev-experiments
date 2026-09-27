@@ -53,6 +53,7 @@ Requires ANTHROPIC_API_KEY in .env.
 
 import asyncio
 import json
+import os
 import re
 import time
 from contextlib import AsyncExitStack
@@ -61,7 +62,7 @@ from anthropic import Anthropic
 from mcp import ClientSession, StdioServerParameters
 from mcp.client.stdio import stdio_client
 
-ANTHROPIC_MODEL = "claude-sonnet-5"
+ANTHROPIC_MODEL = os.environ.get("AGENT_MODEL", "claude-sonnet-5")
 
 # One instruction per step, enforced as a system prompt rather than folded
 # into the per-step user message -- a first run showed Claude sometimes
@@ -103,19 +104,16 @@ def _parse_evaluate_result(raw_text):
 # platform.claude.com/docs/en/about-claude/pricing, checked 2026-09-19.
 # Introductory pricing that became standard; verify again before trusting
 # any cost figure this produces for real budgeting.
-PRICE_PER_MTOK_INPUT = 2.0
-PRICE_PER_MTOK_OUTPUT = 10.0
-
+# Prices live in engines.PRICES (checked 2026-09-27) so the agent loop and
+# the offline engines are costed from the same table.
 # Safety cap on tool-call round-trips per atomic instruction, so a confused
 # agent looping on the wrong element can't run forever.
 MAX_TOOL_ITERATIONS = 8
 
 
 def estimate_cost(input_tokens, output_tokens):
-    return (
-        (input_tokens / 1_000_000) * PRICE_PER_MTOK_INPUT
-        + (output_tokens / 1_000_000) * PRICE_PER_MTOK_OUTPUT
-    )
+    from engines import price
+    return price(ANTHROPIC_MODEL, {"input_tokens": input_tokens, "output_tokens": output_tokens})
 
 
 class PlaywrightMCPClient:

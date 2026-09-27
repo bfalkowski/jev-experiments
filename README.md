@@ -7,8 +7,8 @@ general-purpose Claude tool-use loop driving the real
 [`microsoft/playwright-mcp`](https://github.com/microsoft/playwright-mcp)
 server.
 
-The motivating problem: evaluating AI-generated UIs (e.g. a low-code
-platform's dev-agent-generated app screens) via accessibility-tree browser
+The motivating problem: evaluating AI-generated UIs (e.g. screens of
+business apps built by a coding agent) via accessibility-tree browser
 automation runs into pages with repeated, near-identical elements -- three
 rows each with their own "Edit" button, three "Status" dropdowns with the same label.
 Picking the *right* one requires using surrounding context (which row,
@@ -103,6 +103,60 @@ full ~30-tool MCP schema plus a fresh page snapshot, regardless of how
 trivial that step's action is. Numbers will vary by flow and by model;
 re-run the dashboard's "both" mode to get current numbers for your own
 case.
+
+## Experiment: element selection (paper)
+
+A controlled version of the comparison above, written up as a paper. The
+question: how much of the gap between Jev and a general LLM comes from the
+model, and how much from the interface around it (a full tool-use agent loop
+versus one constrained question)?
+
+**Conditions**
+
+| ID | Engine | What it sees | How it answers |
+|---|---|---|---|
+| J | Jev (`jev-latest`) | Goal + numbered candidate list with row context | `choice` question (index + confidence); `noul` for yes/no checks |
+| J-nc | Jev | Candidate names only, no context | same |
+| C-S | Constrained Claude, `claude-haiku-4-5` | Same candidate list as J | One Messages call, forced tool whose only argument is an index limited to valid positions; forced boolean tool for yes/no checks |
+| C-S-nc | Constrained Claude, `claude-haiku-4-5` | Names only | same |
+| C-L | Constrained Claude, `claude-opus-5-5` | Same candidate list as J | same |
+| A | Claude + playwright-mcp agent loop (`AGENT_MODEL`) | ~30 MCP tool definitions + page snapshots | Any tool call, live browser |
+
+"Constrained" means Claude gets the same question Jev gets and can only answer
+by picking from the list. `engines.candidate_line()` builds the candidate text
+for both, so the input is identical.
+
+**Dataset.** `record_decisions.py` walks the local ticket app (3, 10 and 25
+identical rows) and a self-hosted build of SauceDemo
+(`saucelabs/sample-app-web`) with known selectors and freezes every decision
+point to `data/decisions.jsonl`: goal plus two paraphrases, the full candidate
+list, the correct index (found by DOM identity, not by a model), and a
+screenshot. It also records yes/no verification points whose observations are
+read from the page.
+
+**Running it**
+
+```
+# 1. record (needs the two apps served locally)
+python3 -m http.server 8765 --bind 127.0.0.1            # serves local_test_app.html
+npx vite preview --port 4173 --host 127.0.0.1           # in a sample-app-web checkout, after npm ci && npx vite build
+uv run python record_decisions.py --local-url http://127.0.0.1:8765/local_test_app.html --sauce-url http://127.0.0.1:4173/
+
+# 2. offline conditions (always dry-run first)
+uv run python run_offline.py --dry-run
+uv run python run_offline.py --stage pilot --max-usd 0.50
+uv run python run_offline.py --conditions J,J-nc,C-S,C-S-nc --max-usd 3
+uv run python run_offline.py --conditions C-L --max-usd 6
+
+# 3. agent loop baseline
+AGENT_MODEL=claude-opus-5-5 uv run python run_agent.py --flows local_app,saucedemo --runs 2 --max-usd 6
+
+# 4. analysis
+uv run --with matplotlib python analyze.py
+```
+
+Every runner refuses to spend without `--max-usd`, writes one JSONL line per
+call, and resumes without repeating finished calls.
 
 ## Secrets
 
