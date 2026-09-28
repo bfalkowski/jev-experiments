@@ -59,8 +59,10 @@ REP = "grand"  # the scraper's default context, as in Study 1
 # have no link role). Scraper-blind tasks are where the MCP agent, which reads
 # its own snapshot, can see something the pick-from-a-list engines cannot.
 TASKS = [
-    {"id": "P-status-1007", "kind": "present", "role": "Admin", "goal": "change the status of order #1007 to Shipped",
-     "action": "select", "value": "Shipped", "expect": {"type": "status", "order": 1007, "value": "Shipped"}},
+    # (An earlier version used #1007, which is already Shipped, so the task was a no-op. The agent
+    # noticed and did nothing; the list-based engines re-selected the same value. Replaced.)
+    {"id": "P-status-1005", "kind": "present", "role": "Admin", "goal": "change the status of order #1005 to Shipped",
+     "action": "select", "value": "Shipped", "expect": {"type": "status", "order": 1005, "value": "Shipped"}},
     {"id": "P-edit-1004", "kind": "present", "role": "Admin", "goal": "edit order #1004",
      "action": "click", "expect": {"type": "edit", "order": 1004}},
     {"id": "B-customer-grace", "kind": "scraper-blind", "role": "Admin", "goal": "open the customer details for Grace Liu",
