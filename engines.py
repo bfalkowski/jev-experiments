@@ -65,10 +65,21 @@ def _typesafe(state, questions):
         "Authorization": f"Bearer {os.environ.get('TYPESAFE_API_KEY', '')}",
         "Content-Type": "application/json",
     })
-    start = time.perf_counter()
-    with urllib.request.urlopen(req, timeout=60) as resp:
-        body = json.loads(resp.read().decode())
-    return body, time.perf_counter() - start
+    # Retry transient failures (503s showed up in the ambiguity pilot). Latency
+    # is measured on the attempt that succeeded, so retries do not inflate it.
+    for attempt in range(5):
+        start = time.perf_counter()
+        try:
+            with urllib.request.urlopen(req, timeout=60) as resp:
+                body = json.loads(resp.read().decode())
+            return body, time.perf_counter() - start
+        except urllib.error.HTTPError as e:
+            if e.code not in (429, 500, 502, 503, 504) or attempt == 4:
+                raise
+        except (urllib.error.URLError, TimeoutError):
+            if attempt == 4:
+                raise
+        time.sleep(2 ** attempt)
 
 
 def jev_pick(goal, candidates, with_context=True):
