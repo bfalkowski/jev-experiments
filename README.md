@@ -158,6 +158,37 @@ uv run --with matplotlib python analyze.py
 Every runner refuses to spend without `--max-usd`, writes one JSONL line per
 call, and resumes without repeating finished calls.
 
+## Study 2: Can a browser test agent tell when it can't tell?
+
+Study 1 (above) showed every engine near 100% once the candidate list carries
+row context, so accuracy alone says little. Study 2 asks whether the engines
+know when they *cannot* pick: the element is missing from the page, or several
+look-alikes fit and the text shown does not separate them.
+
+- `record_ambiguity.py` records 42 decision points (31 with the target present,
+  11 where it is missing: a role-gated button that is hidden, a row that does
+  not exist, a product that is not sold) and saves each candidate's surrounding
+  text at three levels: `parent`, `grand` (the Study 1 default) and `wide`.
+- `ambiguity_common.py` builds five views of each page (`none`,
+  `none-shuffled`, `parent`, `grand`, `wide`) and decides, from the text alone,
+  whether the target is identifiable in that view. Missing targets never are.
+- Every engine (Jev, Haiku 4.5, Opus 5.5) can answer "none" (-1) and reports a
+  confidence (Jev natively, Claude in its structured answer).
+- `run_ambiguity.py` runs engines x points x views x repeats with the same
+  budget cap, dry run and resume as Study 1.
+- `analyze_ambiguity.py` scores each response as correct, wrong, over-abstain,
+  abstain, lucky guess, wrong guess, or false action, and reports abstention
+  on unanswerable points, silent guessing, first-match bias, order leakage
+  (`none` vs `none-shuffled`) and whether confidence separates right from wrong.
+
+```
+uv run python run_ambiguity.py --dry-run
+uv run python run_ambiguity.py --pilot --max-usd 0.30
+uv run python run_ambiguity.py --engines jev,haiku --max-usd 1.50
+uv run python run_ambiguity.py --engines opus --max-usd 3
+uv run --with matplotlib python analyze_ambiguity.py
+```
+
 ## Secrets
 
 `.env` is gitignored. A pre-commit hook (`gitleaks`) plus a GitHub Actions

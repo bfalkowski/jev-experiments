@@ -217,3 +217,84 @@ CONDITIONS = {
     "C-L": (f"Constrained Claude ({OPUS}), with row context",
             lambda g, c: claude_pick(g, c, OPUS, True), lambda cl, ob: claude_verify(cl, ob, OPUS)),
 }
+
+
+# ------------------------------------------------ ambiguity study (abstain)
+#
+# Same engines, but every question has an explicit way out: -1 means "none
+# of these" (the element is not on the page) or "can't tell which" (several
+# fit and the text shown does not separate them). Engines also report a
+# confidence: Jev natively, Claude as a number in its structured answer.
+
+ABSTAIN_RULE = (
+    "If no element fits the goal, or more than one element could fit and the "
+    "information shown does not tell you which one is meant, do not guess: "
+    "answer -1."
+)
+PICK_ABSTAIN_SYSTEM = (
+    "You pick which element on a web page a browser test should act on. "
+    "You get a goal and a numbered list of the page's interactive elements, "
+    "sometimes with text from around each element. " + ABSTAIN_RULE + " "
+    "Also give your confidence, from 0 to 1, that your answer is the right response."
+)
+
+
+def jev_pick_abstain(goal, lines):
+    criteria = {str(i): ln for i, ln in enumerate(lines)}
+    criteria["none"] = ("None of the listed elements: the element is not on the page, or several "
+                        "match and the information shown does not tell them apart")
+    state = {"goal": goal, "page_elements": lines}
+    questions = {"target": {
+        "type": "choice",
+        "instructions": f"Which page element should be interacted with to: {goal}. {ABSTAIN_RULE.replace('answer -1', 'answer none')}",
+        "criteria": criteria,
+    }}
+    try:
+        body, elapsed = _typesafe(state, questions)
+        ans = body["answers"]["target"]
+        usage = body.get("usage", {}) or {}
+        choice = ans["choice"]
+        return {"answer": -1 if choice == "none" else int(choice), "confidence": ans.get("confidence"),
+                "latency_s": elapsed, "usage": usage, "cost_usd": price(JEV_MODEL, usage),
+                "model": JEV_MODEL, "stop_reason": None, "error": None}
+    except Exception as e:  # noqa: BLE001
+        return {"answer": None, "error": f"{type(e).__name__}: {e}", "model": JEV_MODEL,
+                "latency_s": None, "usage": {}, "cost_usd": 0.0}
+
+
+def claude_pick_abstain(goal, lines, model):
+    schema = {
+        "type": "object",
+        "properties": {
+            "index": {"type": "integer", "enum": [-1] + list(range(len(lines)))},
+            "confidence": {"type": "number"},
+        },
+        "required": ["index", "confidence"],
+        "additionalProperties": False,
+    }
+    content = f"Goal: {goal}\n\nElements:\n" + "\n".join(f"{i}. {ln}" for i, ln in enumerate(lines))
+    try:
+        start = time.perf_counter()
+        resp = _anthropic().messages.create(
+            model=model, max_tokens=MAX_TOKENS, system=PICK_ABSTAIN_SYSTEM,
+            output_config={"format": {"type": "json_schema", "schema": schema}},
+            messages=[{"role": "user", "content": content}],
+        )
+        elapsed = time.perf_counter() - start
+        usage = _usage_dict(resp.usage)
+        out = _json_answer(resp)
+        conf = out.get("confidence")
+        return {"answer": int(out["index"]),
+                "confidence": None if conf is None else max(0.0, min(1.0, float(conf))),
+                "latency_s": elapsed, "usage": usage, "cost_usd": price(model, usage), "model": model,
+                "stop_reason": getattr(resp, "stop_reason", None), "error": None}
+    except Exception as e:  # noqa: BLE001
+        return {"answer": None, "error": f"{type(e).__name__}: {e}", "model": model,
+                "latency_s": None, "usage": {}, "cost_usd": 0.0}
+
+
+ABSTAIN_ENGINES = {
+    "jev": lambda g, lines: jev_pick_abstain(g, lines),
+    "haiku": lambda g, lines: claude_pick_abstain(g, lines, HAIKU),
+    "opus": lambda g, lines: claude_pick_abstain(g, lines, OPUS),
+}
