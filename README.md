@@ -189,6 +189,34 @@ uv run python run_ambiguity.py --engines opus --max-usd 3
 uv run --with matplotlib python analyze_ambiguity.py
 ```
 
+## Study 3: live runs on a local app
+
+`orders_app.html` is a small order-management page served from the repo
+(no backend, deterministic data, so tests cannot break). It has 25 orders
+across three pages, identical "Edit order" icon buttons and "Status"
+dropdowns on every row, an unlabeled Delete icon, customer names that are
+not exposed as links, and a Viewer role that hides all row actions. Every
+state change is logged to `window.__events`.
+
+`run_live.py` runs 15 tasks (present, missing, off-page and scraper-blind)
+against it in a real browser. Every engine starts from the same URL and
+page state:
+
+- **jev, haiku, opus**: our Playwright code scrapes the page with the same
+  `get_interactive_elements()` and context used offline, the engine picks
+  an element or "none", and our code performs the action.
+- **agent**: Claude (`AGENT_MODEL`, default `claude-opus-5-5`) drives the
+  browser itself through playwright-mcp and may reply `CANNOT_FIND`.
+
+Outcomes are scored from the page's event log (what actually changed), not
+from what the engine said.
+
+```
+uv run python run_live.py --dry-run
+uv run python run_live.py --engines jev,haiku,opus --repeats 2 --max-usd 1
+AGENT_MODEL=claude-opus-5-5 uv run python run_live.py --engines agent --repeats 2 --max-usd 6
+```
+
 ## Secrets
 
 `.env` is gitignored. A pre-commit hook (`gitleaks`) plus a GitHub Actions

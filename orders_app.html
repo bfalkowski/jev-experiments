@@ -1,0 +1,195 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<title>Northwind Orders (local test app)</title>
+<style>
+  :root { --line: #e3e5e8; --muted: #667085; --accent: #2f5bd3; }
+  body { font-family: system-ui, sans-serif; margin: 0; color: #1d2433; background: #f7f8fa; }
+  header { display: flex; justify-content: space-between; align-items: center; padding: 12px 24px; background: #fff; border-bottom: 1px solid var(--line); }
+  header h1 { font-size: 18px; margin: 0; }
+  .role { font-size: 12px; color: var(--muted); border: 1px solid var(--line); border-radius: 12px; padding: 2px 10px; }
+  main { max-width: 1100px; margin: 20px auto; padding: 0 24px; }
+  .toolbar { display: flex; gap: 12px; align-items: center; margin-bottom: 12px; }
+  .toolbar input, .toolbar select { padding: 6px 8px; border: 1px solid var(--line); border-radius: 6px; }
+  table { width: 100%; border-collapse: collapse; background: #fff; border: 1px solid var(--line); border-radius: 8px; }
+  th, td { text-align: left; padding: 8px 12px; border-bottom: 1px solid var(--line); font-size: 14px; }
+  th { color: var(--muted); font-weight: 600; font-size: 12px; text-transform: uppercase; }
+  .icon-btn { border: none; background: none; cursor: pointer; padding: 4px; border-radius: 4px; }
+  .icon-btn:hover { background: #eef1f6; }
+  .icon-btn svg { width: 16px; height: 16px; display: block; }
+  a.customer { color: var(--accent); cursor: pointer; text-decoration: none; }
+  .pager { display: flex; gap: 6px; justify-content: flex-end; margin-top: 12px; }
+  .pager button { padding: 4px 10px; border: 1px solid var(--line); background: #fff; border-radius: 6px; cursor: pointer; }
+  .pager button.current { background: var(--accent); color: #fff; border-color: var(--accent); }
+  .primary { background: var(--accent); color: #fff; border: none; border-radius: 6px; padding: 7px 14px; cursor: pointer; }
+  #editor, #drawer { position: fixed; top: 0; right: 0; width: 320px; height: 100%; background: #fff; border-left: 1px solid var(--line); padding: 20px; box-shadow: -4px 0 12px rgba(0,0,0,0.05); }
+  [hidden] { display: none !important; }
+  tr.editing { background: #fff8e1; }
+</style>
+</head>
+<body>
+<!--
+  A small order-management admin page, built to look like a generated
+  business app and to be fully deterministic for tests:
+
+  - 25 orders, 10 per page (some orders are only on page 2 or 3)
+  - every row has an Edit icon button with the SAME accessible name
+    ("Edit order") and a Status dropdown with the SAME name ("Status")
+  - the Delete icon button has NO accessible name (an unlabeled SVG icon),
+    which is common in generated UIs
+  - role from ?role=Admin|Viewer: Viewers see no Edit/Delete/Status controls
+  - there is no export, refund or bulk feature (for "missing target" tasks)
+
+  Every state change is appended to window.__events, so a test can check
+  what actually happened after an agent acted.
+
+  URL parameters set the starting state so every engine starts from the
+  same page: ?role=Admin&page=1
+-->
+<header>
+  <h1>Northwind Orders</h1>
+  <span class="role" id="role-badge"></span>
+</header>
+<main>
+  <div class="toolbar">
+    <input id="search" type="search" placeholder="Search orders" aria-label="Search orders">
+    <select id="status-filter" aria-label="Filter by status">
+      <option value="">All statuses</option>
+      <option>Pending</option><option>Processing</option><option>Shipped</option><option>Cancelled</option>
+    </select>
+    <span style="flex:1"></span>
+    <button class="primary" id="new-order" hidden>New order</button>
+  </div>
+  <table aria-label="Orders">
+    <thead><tr><th>Order</th><th>Customer</th><th>Date</th><th>Total</th><th>Status</th><th>Actions</th></tr></thead>
+    <tbody id="rows"></tbody>
+  </table>
+  <div class="pager" id="pager"></div>
+</main>
+
+<aside id="editor" hidden>
+  <h3 id="editor-title">Edit order</h3>
+  <p style="color:#667085;font-size:13px">Editing is simulated in this test app.</p>
+  <button class="primary" id="editor-close">Done</button>
+</aside>
+
+<aside id="drawer" hidden>
+  <h3 id="drawer-title">Customer</h3>
+  <p id="drawer-body" style="font-size:14px"></p>
+  <button class="primary" id="drawer-close">Close</button>
+</aside>
+
+<script>
+const CUSTOMERS = ["Alice Chen", "Marcus Webb", "Priya Nair", "Diego Ramirez", "Hannah Okafor",
+  "Tom Lindqvist", "Grace Liu", "Omar Haddad", "Sofia Rossi", "Ben Carter", "Mei Tanaka",
+  "Luca Moretti", "Ada Nwosu", "Kenji Sato", "Nora Byrne", "Ravi Menon", "Elena Petrova",
+  "Sam Whitaker", "Iris Nakamura", "Jonah Feld", "Leila Karimi", "Owen Price", "Zara Ali",
+  "Felix Braun", "Maya Cohen"];
+const STATUSES = ["Pending", "Processing", "Shipped", "Cancelled"];
+let orders = CUSTOMERS.map((c, i) => ({
+  id: 1001 + i,
+  customer: c,
+  date: `2026-09-${String(25 - i).padStart(2, "0")}`,
+  total: (37.5 + i * 53.25 + (i % 3) * 11.1).toFixed(2),
+  status: STATUSES[(i * 3) % 4],
+}));
+orders[3].total = "1240.00";   // a unique amount for a content-based task
+
+const params = new URLSearchParams(location.search);
+const role = params.get("role") === "Viewer" ? "Viewer" : "Admin";
+let page = Math.max(1, parseInt(params.get("page") || "1", 10));
+let filter = "";
+let query = "";
+const PAGE = 10;
+window.__events = [];
+const log = (e) => window.__events.push({...e, t: Date.now()});
+
+const EDIT_SVG = '<svg viewBox="0 0 16 16" aria-hidden="true"><path d="M2 12v2h2l7-7-2-2-7 7zm9.7-8.3 1.6 1.6-1.1 1.1-1.6-1.6z" fill="currentColor"/></svg>';
+const DELETE_SVG = '<svg viewBox="0 0 16 16"><path d="M5 2h6v1h3v1H2V3h3zM3 5h10l-1 9H4z" fill="currentColor"/></svg>';
+
+function visible() {
+  return orders.filter(o => (!filter || o.status === filter) &&
+    (!query || (`#${o.id} ${o.customer}`).toLowerCase().includes(query.toLowerCase())));
+}
+
+function render() {
+  document.getElementById("role-badge").textContent = `Signed in as ${role}`;
+  document.getElementById("new-order").hidden = role !== "Admin";
+  const list = visible();
+  const pages = Math.max(1, Math.ceil(list.length / PAGE));
+  page = Math.min(page, pages);
+  const body = document.getElementById("rows");
+  body.innerHTML = "";
+  for (const o of list.slice((page - 1) * PAGE, page * PAGE)) {
+    const tr = document.createElement("tr");
+    tr.dataset.id = o.id;
+    const statusCell = role === "Admin"
+      ? `<select aria-label="Status" class="status" data-id="${o.id}">${STATUSES.map(s =>
+          `<option ${s === o.status ? "selected" : ""}>${s}</option>`).join("")}</select>`
+      : o.status;
+    const actions = role === "Admin"
+      ? `<button class="icon-btn edit" aria-label="Edit order" data-id="${o.id}">${EDIT_SVG}</button>
+         <button class="icon-btn delete" data-id="${o.id}">${DELETE_SVG}</button>`
+      : "";
+    tr.innerHTML = `<td>#${o.id}</td><td><a class="customer" data-name="${o.customer}">${o.customer}</a></td>
+      <td>${o.date}</td><td>$${Number(o.total).toLocaleString("en-US", {minimumFractionDigits: 2})}</td>
+      <td>${statusCell}</td><td>${actions}</td>`;
+    body.appendChild(tr);
+  }
+  const pager = document.getElementById("pager");
+  pager.innerHTML = "";
+  const btn = (label, target, extra) => {
+    const b = document.createElement("button");
+    b.textContent = label;
+    if (extra) b.className = extra;
+    b.disabled = target < 1 || target > pages;
+    b.onclick = () => { page = target; log({type: "page", page}); render(); };
+    pager.appendChild(b);
+  };
+  btn("Previous", page - 1);
+  for (let p = 1; p <= pages; p++) btn(String(p), p, p === page ? "current" : "");
+  btn("Next", page + 1);
+  wire();
+}
+
+function wire() {
+  document.querySelectorAll("select.status").forEach(s => s.onchange = () => {
+    const o = orders.find(o => o.id == s.dataset.id);
+    o.status = s.value;
+    log({type: "status", order: o.id, value: s.value});
+  });
+  document.querySelectorAll("button.edit").forEach(b => b.onclick = () => {
+    document.querySelectorAll("tr.editing").forEach(r => r.classList.remove("editing"));
+    b.closest("tr").classList.add("editing");
+    document.getElementById("editor-title").textContent = `Edit order #${b.dataset.id}`;
+    document.getElementById("editor").hidden = false;
+    log({type: "edit", order: Number(b.dataset.id)});
+  });
+  document.querySelectorAll("button.delete").forEach(b => b.onclick = () => {
+    orders = orders.filter(o => o.id != b.dataset.id);
+    log({type: "delete", order: Number(b.dataset.id)});
+    render();
+  });
+  document.querySelectorAll("a.customer").forEach(a => a.onclick = () => {
+    document.getElementById("drawer-title").textContent = a.dataset.name;
+    const o = orders.find(o => o.customer === a.dataset.name);
+    document.getElementById("drawer-body").textContent = `Latest order #${o.id} on ${o.date}.`;
+    document.getElementById("drawer").hidden = false;
+    log({type: "customer", name: a.dataset.name});
+  });
+}
+
+document.getElementById("status-filter").onchange = (e) => {
+  filter = e.target.value; page = 1; log({type: "filter", value: filter}); render();
+};
+document.getElementById("search").oninput = (e) => {
+  query = e.target.value; page = 1; log({type: "search", value: query}); render();
+};
+document.getElementById("new-order").onclick = () => log({type: "new-order"});
+document.getElementById("editor-close").onclick = () => { document.getElementById("editor").hidden = true; };
+document.getElementById("drawer-close").onclick = () => { document.getElementById("drawer").hidden = true; };
+render();
+</script>
+</body>
+</html>
