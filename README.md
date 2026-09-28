@@ -1,5 +1,10 @@
 # jev-experiments
 
+> **The write-up of this work lives in
+> [browser-agent-abstention](https://github.com/bfalkowski/browser-agent-abstention)**
+> (paper: https://bfalkowski.github.io/writing/cant-tell.html). This repo is the
+> earlier, looser exploration, including the interactive side-by-side dashboard.
+
 A weekend project comparing two ways of picking the right element on a
 generated web page: [TypeSafe AI's Jev](https://typesafe.ai/blog/introducing-system-one-models-and-jev)
 (a purpose-built "System One" structured-decision model) against a
